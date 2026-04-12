@@ -6,16 +6,16 @@
 const CACHE = 'arthadesk-v2';
 
 const PRECACHE = [
-  '/ArthaDesk-/',
-  '/ArthaDesk-/index.html',
-  '/ArthaDesk-/admin.html',
-  '/ArthaDesk-/manifest.json',
-  '/ArthaDesk-/admin-manifest.json',
-  '/ArthaDesk-/sw.js',
-  '/ArthaDesk-/icons/icon-192.png',
-  '/ArthaDesk-/icons/icon-512.png',
-  '/ArthaDesk-/icons/admin-192.png',
-  '/ArthaDesk-/icons/admin-512.png',
+  '/ArthaDesk/',
+  '/ArthaDesk/index.html',
+  '/ArthaDesk/admin.html',
+  '/ArthaDesk/manifest.json',
+  '/ArthaDesk/admin-manifest.json',
+  '/ArthaDesk/sw.js',
+  '/ArthaDesk/icons/icon-192.png',
+  '/ArthaDesk/icons/icon-512.png',
+  '/ArthaDesk/icons/admin-192.png',
+  '/ArthaDesk/icons/admin-512.png',
 ];
 
 /* ── INSTALL ─────────────────────────────────── */
@@ -62,7 +62,7 @@ self.addEventListener('fetch', e => {
           if (cached) return cached;
           // For HTML navigation, serve index as fallback
           if (e.request.mode === 'navigate') {
-            return caches.match('/ArthaDesk-/index.html');
+            return caches.match('/ArthaDesk/index.html');
           }
         })
       )

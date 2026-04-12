@@ -1096,7 +1096,7 @@ function showInstallBanner() {
 // Register Service Worker
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function() {
-    navigator.serviceWorker.register('sw.js', { scope: '/ArthaDesk-/' })
+    navigator.serviceWorker.register('sw.js', { scope: '/ArthaDesk/' })
       .then(function(reg) { console.log('[ArthaDesk Admin] SW registered:', reg.scope); })
       .catch(function(e)  { console.log('[ArthaDesk Admin] SW error:', e); });
   });

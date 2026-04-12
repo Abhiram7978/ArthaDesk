@@ -12791,7 +12791,7 @@ function dismissPWA() {
 // Register Service Worker
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function() {
-    navigator.serviceWorker.register('sw.js', { scope: '/ArthaDesk-/' })
+    navigator.serviceWorker.register('sw.js', { scope: '/ArthaDesk/' })
       .then(function(reg) {
         console.log('[ArthaDesk] SW registered, scope:', reg.scope);
       })
