@@ -21,8 +21,8 @@
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script>
-window.SUPABASE_URL      = 'https://ohvuvcoszgwxdzapsazl.supabase.co';
-window.SUPABASE_ANON_KEY = 'sb_publishable_wztzHwNFz6MfA0izGdeaXA_UDH3SoCQ';
+window.SUPABASE_URL      = 'https://mzzmhmzsfkqrlxsfvboy.supabase.co';
+window.SUPABASE_ANON_KEY = 'sb_publishable_cKcA5vu3hJ_-do9Dd82Rgg_cyqRKppl';
 </script>
 <style>
 /* ═══════════════════════════════════════════
@@ -420,6 +420,7 @@ input,select,textarea{font-family:'DM Mono',monospace;outline:none;-webkit-appea
       <small>ADMIN</small>
     </div>
     <div class="topbar-spacer"></div>
+    <div id="syncBadge" style="display:none;font-size:10px;color:var(--green);font-family:'DM Mono',monospace;background:var(--green-dim);padding:4px 10px;border-radius:6px;border:1px solid rgba(34,197,94,.2)"></div>
     <button class="topbar-logout" onclick="doAdminLogout()" title="Logout">🚪</button>
   </div>
 
@@ -707,7 +708,9 @@ input,select,textarea{font-family:'DM Mono',monospace;outline:none;-webkit-appea
 //  ArthaDesk Admin — Mobile App JS
 // ═══════════════════════════════════════════════════
 const { createClient } = window.supabase;
-const sb = createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+const sb = createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, {
+  realtime: { params: { eventsPerSecond: 10 } }
+});
 
 let _users = [], _companies = [], _actLog = [];
 let currentTab = 'home';
@@ -750,6 +753,7 @@ async function doAdminLogin() {
 
 function doAdminLogout() {
   if (!confirm('Logout from admin panel?')) return;
+  if (_adminChannel) sb.removeChannel(_adminChannel);
   sessionStorage.removeItem('ad_session');
   document.getElementById('app').classList.remove('visible');
   document.getElementById('loginScreen').style.display = 'flex';
@@ -772,6 +776,44 @@ function navigate(tab) {
 async function loadAll() {
   await Promise.all([loadUsers(), loadCompanies()]);
   renderDashboard();
+  startAdminRealtime();
+}
+
+/* ── REALTIME SYNC ──────────────────────────── */
+let _adminChannel = null;
+function startAdminRealtime() {
+  if (_adminChannel) sb.removeChannel(_adminChannel);
+  _adminChannel = sb.channel('admin_realtime')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'approved_users' }, async () => {
+      await loadUsers();
+      if (currentTab === 'users') renderUsers();
+      if (currentTab === 'home') renderDashboard();
+      showSyncBadge();
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'admin_companies' }, async () => {
+      await loadCompanies();
+      if (currentTab === 'companies') renderCompanies();
+      showSyncBadge();
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'app_data' }, async () => {
+      showSyncBadge();
+    })
+    .subscribe(status => {
+      console.log('[Admin] Realtime:', status);
+      const dot = document.querySelector('.topbar-dot');
+      if (dot) {
+        dot.style.background = status === 'SUBSCRIBED' ? 'var(--green)' : 'var(--amber)';
+        dot.style.boxShadow  = status === 'SUBSCRIBED' ? '0 0 10px var(--green)' : '0 0 10px var(--amber)';
+      }
+    });
+}
+
+function showSyncBadge() {
+  const el = document.getElementById('syncBadge');
+  if (!el) return;
+  el.style.display = 'block';
+  el.textContent = '🔄 Synced ' + new Date().toLocaleTimeString();
+  setTimeout(() => el.style.display = 'none', 3000);
 }
 
 async function loadUsers() {

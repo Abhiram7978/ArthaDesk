@@ -489,6 +489,9 @@ select.form-control option{background:var(--surface)}
 .auth-footer-link{text-align:center;margin-top:18px;font-size:13px;color:var(--text3);}
 .auth-footer-link a{color:var(--accent);font-weight:600;cursor:pointer;text-decoration:none;}
 .auth-footer-link a:hover{text-decoration:underline;}
+/* Admin-controlled: hide register link */
+#loginScreen .auth-footer-link { display:none !important; }
+#registerScreen { display:none !important; }
 .auth-remember{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2);margin-bottom:14px;}
 .auth-remember input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px;}
 .auth-error{background:rgba(255,71,87,.1);border:1px solid rgba(255,71,87,.3);border-radius:var(--radius);padding:10px 14px;font-size:12px;color:var(--danger);margin-bottom:14px;display:none;}
@@ -539,8 +542,8 @@ select.form-control option{background:var(--surface)}
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script>
-  window.SUPABASE_URL      = 'https://ohvuvcoszgwxdzapsazl.supabase.co';
-  window.SUPABASE_ANON_KEY = 'sb_publishable_wztzHwNFz6MfA0izGdeaXA_UDH3SoCQ';
+  window.SUPABASE_URL      = 'https://mzzmhmzsfkqrlxsfvboy.supabase.co';
+  window.SUPABASE_ANON_KEY = 'sb_publishable_cKcA5vu3hJ_-do9Dd82Rgg_cyqRKppl';
   window.ARTHADESK_CONFIG  = { appName:'ArthaDesk', version:'3.9', localCache:true, syncInterval:30000 };
   </script>
 <link rel="icon" type="image/png" href="data:image/png;base64,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">
@@ -575,14 +578,12 @@ select.form-control option{background:var(--surface)}
     <button class="auth-btn auth-btn-secondary" onclick="showCompanyList()">🏢 Open a Company</button>
 
 
-    <div class="auth-footer-link">
-      New to ArthaDesk? <a onclick="showRegister()" style="color:var(--accent);font-weight:700;cursor:pointer">Create a free account →</a>
-    </div>
+<!-- registration disabled by admin -->
   </div>
 </div>
 
 <!-- ===== REGISTER SCREEN ===== -->
-<div class="auth-screen hidden" id="registerScreen">
+<div class="auth-screen hidden" id="registerScreen" style="display:none!important">
   <div class="auth-bg"></div>
   <div class="auth-glow"></div>
   <div class="auth-card">
@@ -1025,7 +1026,7 @@ select.form-control option{background:var(--surface)}
     <div class="auth-success" id="forgotSuccess">✅ Reset link sent! Please check your email inbox.</div>
     <div class="auth-input-group">
       <span class="auth-input-icon">📧</span>
-      <input type="email" class="auth-input" id="forgotEmail" placeholder="Registered email address">
+      <input type="email" class="auth-input" id="forgotEmail" style="display:none" placeholder="Registered email address">
     </div>
     <button class="auth-btn auth-btn-primary" onclick="doForgotPwd()">📨 Send Reset Link</button>
     <button class="auth-btn auth-btn-secondary" onclick="showLogin()">← Back to Login</button>
@@ -6728,9 +6729,9 @@ function doPrint() {
       'html,body{margin:0;padding:0;background:#fff;color:#1a1a1a;font-family:Arial,sans-serif;font-size:' + fontSize + ';}' +
       'table{border-collapse:collapse;}*{box-sizing:border-box;}@page{' + pageSize + '}' +
       '@media print{html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}' +
-      '</style></head><body>' + invoiceHTML +
+      '</st'+'yle></he'+'ad><body>' + invoiceHTML +
       '<scr'+'ipt>window.onload=function(){setTimeout(function(){window.print();},300);window.onafterprint=function(){window.close();};};<\/scr'+'ipt>' +
-      '</body></html>';
+      '</bo'+'dy></html>';
     var popup = null;
     try { popup = window.open('', '_blank', 'width=850,height=1100'); } catch(e) {}
     if (popup && !popup.closed) {
@@ -6766,14 +6767,14 @@ function doPrint() {
       '}' +
       '.btn-print{flex:1;padding:12px;background:#00d4aa;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;}' +
       '.btn-back{flex:1;padding:12px;background:#2a3547;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;}' +
-    '</style>' +
+    '</st'+'yle>' +
     '</head><body>' +
     '<div style="padding-bottom:70px;">' + invoiceHTML + '</div>' +
     '<div class="no-print">' +
     '  <button class="btn-back" onclick="window.location.reload()">&#8592; Back to App</button>' +
     '  <button class="btn-print" onclick="window.print()">&#x1F5A8; Print / Save PDF</button>' +
     '</div>' +
-    '</body></html>';
+    '</bo'+'dy></html>';
 
   document.open();
   document.write(fullPage);
@@ -7859,7 +7860,7 @@ function showScreen(id) {
   if (target) target.classList.remove('hidden');
 }
 function showLogin() { showScreen('loginScreen'); }
-function showRegister() { showScreen('registerScreen'); }
+function showRegister() { if(typeof showToast==='function') showToast('❌ Self-registration is disabled. Contact admin.','danger'); }
 function showCompanyList() { showScreen('companyListScreen'); renderCompanyCards(); }
 function showCreateCompany() {
   showScreen('createCompanyScreen');
@@ -7883,7 +7884,7 @@ function showCreateCompany() {
 function createCmpBack() {
   // If coming from registration, go back to register screen; otherwise to company list
   if (currentUser && currentUser.isNew) {
-    showRegister();
+    showLogin(); if(typeof showToast==='function') showToast('Contact admin to create an account','danger');
   } else {
     showCompanyList();
   }
@@ -12017,7 +12018,7 @@ function _pdfOpen(title, bodyHTML, landscape){
       'body{-webkit-print-color-adjust:exact;print-color-adjust:exact}'+
       '.pdf-ftr{position:running(footer)}'+
     '}'+
-    '</style></head><body>'+
+    '</st'+'yle></head><body>'+
     '<div class="pdf-hdr">'+
       '<div>'+
         '<div class="pdf-co-name">'+co.name+'</div>'+
@@ -12034,7 +12035,7 @@ function _pdfOpen(title, bodyHTML, landscape){
     bodyHTML+
     '<div class="pdf-ftr"><span>'+co.name+' &mdash; ArthaDesk GST Accounting</span><span>Printed on '+_pdfToday()+'</span></div>'+
     '<script>window.onload=function(){window.focus();window.print();window.onafterprint=function(){window.close();};};<\/script>'+
-    '</body></html>';
+    '</bo'+'dy></html>';
 
   var pop = window.open('','_blank','width=1050,height=800,scrollbars=yes');
   if(!pop){
@@ -12580,159 +12581,285 @@ else{setTimeout(_injectPDFBtns,900);}
 
 <script>
 /**
- * ArthaDesk — Supabase Integration Layer  v3.9  (Admin-Controlled)
- * Self-registration DISABLED. Only admin-created users can login.
+ * ArthaDesk — Supabase Layer v4.0
+ * ✅ Admin-controlled auth (approved_users table)
+ * ✅ Real-time data sync across all devices
+ * ✅ Self-registration DISABLED
  */
 (function () {
   'use strict';
   if (!window.SUPABASE_URL || window.SUPABASE_URL.includes('YOUR_PROJECT')) {
     console.warn('[ArthaDesk] Supabase not configured.'); return;
   }
+
   const { createClient } = window.supabase;
-  const sb = createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+  const sb = createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, {
+    realtime: { params: { eventsPerSecond: 10 } }
+  });
   window._supabaseClient = sb;
-  const cache = (window.ARTHADESK_CONFIG || {}).localCache !== false;
 
-  function toast(msg, type='success') { if(typeof showToast==='function') showToast(msg,type); }
-  function setErr(id,msg){const el=document.getElementById(id);if(!el)return;el.textContent=msg;el.classList.add('show');}
-  function clearErr(id){const el=document.getElementById(id);if(el)el.classList.remove('show');}
+  const cache = true;
+  let _realtimeChannel = null;
 
-  /* Hide register links after DOM loads */
-  window.addEventListener('DOMContentLoaded',function(){
-    ['a[onclick*="showRegister"]','button[onclick*="showRegister"]','.register-link','.signup-link']
-      .forEach(sel=>document.querySelectorAll(sel).forEach(el=>{el.style.display='none';}));
-    document.querySelectorAll('a[onclick*="showForgotPwd"],button[onclick*="showForgotPwd"]').forEach(el=>{
-      el.textContent='Contact Admin';
-      el.setAttribute('onclick','showToast("Contact your admin to reset password","success")');
-    });
+  function toast(msg, type='success') {
+    if (typeof showToast === 'function') showToast(msg, type);
+  }
+  function setErr(id, msg) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.add('show');
+  }
+  function clearErr(id) {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove('show');
+  }
+
+  /* ── HIDE REGISTER LINKS ────────────────────── */
+  window.addEventListener('DOMContentLoaded', function () {
+    ['a[onclick*="showRegister"]','button[onclick*="showRegister"]',
+     '.register-link','.signup-link','[onclick*="showRegister"]']
+      .forEach(sel => document.querySelectorAll(sel).forEach(el => el.style.display = 'none'));
+    document.querySelectorAll('a[onclick*="showForgotPwd"],button[onclick*="showForgotPwd"]')
+      .forEach(el => {
+        el.textContent = 'Contact Admin';
+        el.setAttribute('onclick', 'showToast&&showToast("Contact your admin to reset password","success")');
+      });
+    // Hide "New to ArthaDesk?" text and register link
+    document.querySelectorAll('a[onclick*="Register"],span[onclick*="Register"],.auth-switch')
+      .forEach(el => el.style.display = 'none');
   });
 
-  /* Block self-registration */
-  window.showRegister = function(){ toast('❌ Self-registration disabled. Contact admin.','danger'); };
-  window.doRegister   = function(){ toast('❌ Registration disabled. Admin creates accounts.','danger'); };
+  /* ── BLOCK SELF REGISTRATION ────────────────── */
+  window.showRegister = () => toast('❌ Self-registration is disabled. Contact admin.', 'danger');
+  window.doRegister   = () => toast('❌ Admin creates accounts. Contact your admin.', 'danger');
 
-  /* blSave — write to localStorage + Supabase */
-  window.blSave = function(key,data){
-    if(cache){try{localStorage.setItem(key,JSON.stringify(data));}catch(_){}}
-    const uid=window._approvedUserId; if(!uid)return;
-    sb.from('app_data').upsert({user_id:uid,data_key:key,data_value:data,updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'})
-      .then(({error})=>{if(error)console.error('[blSave]',error.message);});
+  /* ── blSave → Supabase + localStorage ──────── */
+  window.blSave = function (key, data) {
+    try { localStorage.setItem(key, JSON.stringify(data)); } catch (_) {}
+    const uid = window._approvedUserId;
+    if (!uid) return;
+    sb.from('app_data')
+      .upsert({ user_id: uid, data_key: key, data_value: data, updated_at: new Date().toISOString() },
+               { onConflict: 'user_id,data_key' })
+      .then(({ error }) => { if (error) console.error('[blSave]', error.message); });
   };
 
-  /* blLoad — read from localStorage cache */
-  window.blLoad = function(key,fallback){
-    if(cache){try{const r=localStorage.getItem(key);if(r!==null)return JSON.parse(r);}catch(_){}}
+  /* ── blLoad → localStorage cache ───────────── */
+  window.blLoad = function (key, fallback) {
+    try {
+      const r = localStorage.getItem(key);
+      if (r !== null) return JSON.parse(r);
+    } catch (_) {}
     return fallback;
   };
 
-  /* blRemove */
-  window.blRemove = function(key){
-    if(cache){try{localStorage.removeItem(key);}catch(_){}}
-    const uid=window._approvedUserId; if(!uid)return;
-    sb.from('app_data').delete().match({user_id:uid,data_key:key}).then(({error})=>{if(error)console.error('[blRemove]',error.message);});
+  /* ── blRemove ───────────────────────────────── */
+  window.blRemove = function (key) {
+    try { localStorage.removeItem(key); } catch (_) {}
+    const uid = window._approvedUserId;
+    if (!uid) return;
+    sb.from('app_data').delete().match({ user_id: uid, data_key: key })
+      .then(({ error }) => { if (error) console.error('[blRemove]', error.message); });
   };
 
-  async function rehydrateCache(userId){
-    const {data,error}=await sb.from('app_data').select('data_key,data_value').eq('user_id',userId);
-    if(error){console.error('[rehydrate]',error.message);return;}
-    (data||[]).forEach(row=>{try{localStorage.setItem(row.data_key,JSON.stringify(row.data_value));}catch(_){}});
-    console.log('[ArthaDesk] Rehydrated',data?.length||0,'keys');
+  /* ── REHYDRATE from Supabase ────────────────── */
+  async function rehydrateCache(userId) {
+    const { data, error } = await sb
+      .from('app_data').select('data_key,data_value').eq('user_id', userId);
+    if (error) { console.error('[rehydrate]', error.message); return; }
+    (data || []).forEach(row => {
+      try { localStorage.setItem(row.data_key, JSON.stringify(row.data_value)); } catch (_) {}
+    });
+    console.log('[ArthaDesk] Rehydrated', data?.length || 0, 'keys from Supabase');
   }
 
-  window.saveCompanyList=function(){blSave('arthadesk_companies',window.registeredCompanies||[]);};
-  window.loadCompanyList=function(){const l=blLoad('arthadesk_companies',[]);window.registeredCompanies=Array.isArray(l)?l:[];};
-  window.saveUserList=function(){};
-  window.loadUserList=function(){};
+  /* ── REALTIME SYNC ──────────────────────────── */
+  function startRealtime(userId) {
+    if (_realtimeChannel) sb.removeChannel(_realtimeChannel);
 
-  /* ══ doLogin — checks approved_users table ══ */
-  window.doLogin = async function(){
-    const email=(document.getElementById('loginEmail')?.value||'').trim().toLowerCase();
-    const pwd=(document.getElementById('loginPassword')?.value||'');
+    _realtimeChannel = sb
+      .channel('app_data_sync_' + userId)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'app_data',
+        filter: `user_id=eq.${userId}`
+      }, (payload) => {
+        console.log('[ArthaDesk] Realtime update:', payload.eventType, payload.new?.data_key);
+        // Update local cache
+        if (payload.eventType === 'DELETE') {
+          try { localStorage.removeItem(payload.old?.data_key); } catch (_) {}
+        } else if (payload.new?.data_key) {
+          try {
+            localStorage.setItem(
+              payload.new.data_key,
+              JSON.stringify(payload.new.data_value)
+            );
+          } catch (_) {}
+        }
+        // Trigger UI refresh
+        _triggerUIRefresh(payload.new?.data_key);
+      })
+      .subscribe((status) => {
+        console.log('[ArthaDesk] Realtime status:', status);
+        if (status === 'SUBSCRIBED') {
+          toast('🔴 Live sync active', 'success');
+        }
+      });
+  }
+
+  function _triggerUIRefresh(dataKey) {
+    if (!dataKey) return;
+    try {
+      if (dataKey.includes('invoice') && typeof rebuildInvoiceListUI === 'function') {
+        rebuildInvoiceListUI();
+      }
+      if (dataKey.includes('purchase') && typeof rebuildPurchaseListUI === 'function') {
+        rebuildPurchaseListUI();
+      }
+      if (dataKey.includes('receipt') && typeof rebuildReceiptListUI === 'function') {
+        rebuildReceiptListUI();
+      }
+      if (dataKey.includes('payment') && typeof rebuildPaymentListUI === 'function') {
+        rebuildPaymentListUI();
+      }
+      if (typeof renderDashboard === 'function') renderDashboard();
+      if (typeof renderAllMasters === 'function') renderAllMasters();
+    } catch (e) {
+      console.log('[ArthaDesk] UI refresh error:', e.message);
+    }
+  }
+
+  function stopRealtime() {
+    if (_realtimeChannel) {
+      sb.removeChannel(_realtimeChannel);
+      _realtimeChannel = null;
+    }
+  }
+
+  /* ── COMPANY / USER LIST ────────────────────── */
+  window.saveCompanyList = () => blSave('arthadesk_companies', window.registeredCompanies || []);
+  window.loadCompanyList = () => {
+    const l = blLoad('arthadesk_companies', []);
+    window.registeredCompanies = Array.isArray(l) ? l : [];
+  };
+  window.saveUserList = () => {};
+  window.loadUserList = () => {};
+
+  /* ══ doLogin ════════════════════════════════ */
+  window.doLogin = async function () {
+    const email = (document.getElementById('loginEmail')?.value || '').trim().toLowerCase();
+    const pwd   = (document.getElementById('loginPassword')?.value || '');
     clearErr('loginError');
-    if(!email||!pwd){setErr('loginError','❌ Please enter email and password.');return;}
+    if (!email || !pwd) { setErr('loginError', '❌ Please enter email and password.'); return; }
 
-    const btn=document.querySelector('#loginScreen .auth-btn-primary')||document.querySelector('#loginScreen button[onclick*="doLogin"]');
-    if(btn){btn._orig=btn.textContent;btn.textContent='⏳ Verifying…';btn.disabled=true;}
+    const btn = document.querySelector('#loginScreen .auth-btn-primary') ||
+                document.querySelector('#loginScreen button[onclick*="doLogin"]');
+    if (btn) { btn._orig = btn.textContent; btn.textContent = '⏳ Verifying…'; btn.disabled = true; }
 
-    try{
-      const {data:users,error}=await sb.from('approved_users').select('*').eq('email',email).limit(1);
-      if(btn){btn.textContent=btn._orig||'Login';btn.disabled=false;}
-      if(error){setErr('loginError','❌ Server error. Try again.');return;}
-      if(!users||users.length===0){setErr('loginError','❌ Account not found. Contact your admin.');return;}
-      const user=users[0];
-      if(!user.is_active){setErr('loginError','🚫 Your account is blocked. Contact admin.');return;}
-      if(user.password!==pwd){setErr('loginError','❌ Incorrect password.');return;}
+    try {
+      const { data: users, error } = await sb
+        .from('approved_users').select('*').eq('email', email).limit(1);
+      if (btn) { btn.textContent = btn._orig || 'Sign In'; btn.disabled = false; }
+      if (error) { setErr('loginError', '❌ Server error. Try again.'); return; }
+      if (!users?.length) { setErr('loginError', '❌ Account not found. Contact your admin.'); return; }
 
-      /* SUCCESS */
-      window._approvedUserId=user.id;
-      window.currentUser={id:user.id,email:user.email,name:user.full_name,isNew:false};
+      const user = users[0];
+      if (!user.is_active) { setErr('loginError', '🚫 Account blocked. Contact admin.'); return; }
+      if (user.password !== pwd) { setErr('loginError', '❌ Incorrect password.'); return; }
 
-      const assigned=(user.assigned_companies||[]).map(n=>({name:n,gstin:'',city:''}));
-      try{
-        const saved=JSON.parse(localStorage.getItem('arthadesk_companies')||'[]');
-        window.registeredCompanies=assigned.map(ac=>saved.find(s=>s.name===ac.name)||ac);
-      }catch(_){window.registeredCompanies=assigned;}
+      /* ✅ Success */
+      window._approvedUserId = user.id;
+      window.currentUser = { id: user.id, email: user.email, name: user.full_name, isNew: false };
 
-      blSave('arthadesk_active_user',window.currentUser);
-      blSave('arthadesk_companies',window.registeredCompanies);
+      const assigned = (user.assigned_companies || []).map(n => ({ name: n, gstin: '', city: '' }));
+      try {
+        const saved = JSON.parse(localStorage.getItem('arthadesk_companies') || '[]');
+        window.registeredCompanies = assigned.map(ac => saved.find(s => s.name === ac.name) || ac);
+      } catch (_) { window.registeredCompanies = assigned; }
+
+      blSave('arthadesk_active_user', window.currentUser);
+      blSave('arthadesk_companies', window.registeredCompanies);
+
+      /* Rehydrate + start realtime */
       await rehydrateCache(user.id);
+      startRealtime(user.id);
 
-      if(window.registeredCompanies.length>0){try{showCompanyList();}catch(_){}}
-      else{toast('⚠️ No companies assigned to your account. Contact admin.','danger');}
-    }catch(err){
-      if(btn){btn.textContent=btn._orig||'Login';btn.disabled=false;}
-      setErr('loginError','❌ Login failed: '+err.message);
+      if (window.registeredCompanies.length > 0) {
+        try { showCompanyList(); } catch (_) {}
+      } else {
+        toast('⚠️ No companies assigned. Contact your admin.', 'danger');
+      }
+    } catch (err) {
+      if (btn) { btn.textContent = btn._orig || 'Sign In'; btn.disabled = false; }
+      setErr('loginError', '❌ ' + err.message);
     }
   };
 
-  /* doLogout */
-  window.doLogout=function(){
-    window._approvedUserId=null; window.currentUser=null; window.registeredCompanies=[];
-    localStorage.removeItem('arthadesk_active_user'); localStorage.removeItem('arthadesk_companies');
-    if(typeof showLogin==='function')showLogin();
-    toast('Signed out.','success');
+  /* ── doLogout ───────────────────────────────── */
+  window.doLogout = function () {
+    stopRealtime();
+    window._approvedUserId = null;
+    window.currentUser = null;
+    window.registeredCompanies = [];
+    localStorage.removeItem('arthadesk_active_user');
+    localStorage.removeItem('arthadesk_companies');
+    if (typeof showLogin === 'function') showLogin();
+    toast('Signed out.', 'success');
   };
 
-  /* doForgotPwd */
-  window.doForgotPwd=function(){
-    toast('Contact your admin to reset your password.','success');
-    const el=document.getElementById('forgotSuccess');if(el)el.classList.add('show');
-    setTimeout(()=>{if(typeof showLogin==='function')showLogin();},2500);
+  /* ── doForgotPwd ────────────────────────────── */
+  window.doForgotPwd = function () {
+    toast('Contact your admin to reset your password.', 'success');
+    const el = document.getElementById('forgotSuccess');
+    if (el) el.classList.add('show');
+    setTimeout(() => { if (typeof showLogin === 'function') showLogin(); }, 2500);
   };
 
-  /* Session restore on page load */
-  window.addEventListener('load',async function(){
-    setTimeout(async()=>{
-      const saved=blLoad('arthadesk_active_user',null);
-      if(!saved?.email)return;
-      const {data:users}=await sb.from('approved_users').select('*').eq('email',saved.email).eq('is_active',true).limit(1);
-      if(!users||users.length===0){
+  /* ── SESSION RESTORE ────────────────────────── */
+  window.addEventListener('load', async function () {
+    setTimeout(async () => {
+      const saved = blLoad('arthadesk_active_user', null);
+      if (!saved?.email) return;
+
+      /* Re-verify still active */
+      const { data: users } = await sb
+        .from('approved_users').select('*').eq('email', saved.email).eq('is_active', true).limit(1);
+      if (!users?.length) {
         localStorage.removeItem('arthadesk_active_user');
-        toast('⚠️ Your access has been revoked. Contact admin.','danger'); return;
+        toast('⚠️ Access revoked. Contact admin.', 'danger');
+        return;
       }
-      const user=users[0];
-      window._approvedUserId=user.id;
-      window.currentUser={id:user.id,email:user.email,name:user.full_name,isNew:false};
-      const assigned=(user.assigned_companies||[]).map(n=>({name:n,gstin:'',city:''}));
-      try{
-        const saved2=JSON.parse(localStorage.getItem('arthadesk_companies')||'[]');
-        window.registeredCompanies=assigned.map(ac=>saved2.find(s=>s.name===ac.name)||ac);
-      }catch(_){window.registeredCompanies=assigned;}
+
+      const user = users[0];
+      window._approvedUserId = user.id;
+      window.currentUser = { id: user.id, email: user.email, name: user.full_name, isNew: false };
+
+      const assigned = (user.assigned_companies || []).map(n => ({ name: n, gstin: '', city: '' }));
+      try {
+        const saved2 = JSON.parse(localStorage.getItem('arthadesk_companies') || '[]');
+        window.registeredCompanies = assigned.map(ac => saved2.find(s => s.name === ac.name) || ac);
+      } catch (_) { window.registeredCompanies = assigned; }
+
       await rehydrateCache(user.id);
-      if(window.registeredCompanies.length>0){try{showCompanyList();}catch(_){}}
-    },60);
+      startRealtime(user.id);
+
+      if (window.registeredCompanies.length > 0) {
+        try { showCompanyList(); } catch (_) {}
+      }
+    }, 60);
   });
 
-  console.log('[ArthaDesk] Admin-controlled auth ✅');
+  console.log('[ArthaDesk] Supabase layer v4.0 loaded ✅ (realtime enabled)');
 })();
 
 </script>
-<script>
 
 <!-- ── PWA INSTALL BANNER ── -->
+<style>@keyframes slideUp{from{transform:translateY(80px);opacity:0}to{transform:translateY(0);opacity:1}}</style>
 <div id="pwaBanner" style="display:none;position:fixed;bottom:16px;left:12px;right:12px;z-index:9998;background:#111827;border:1.5px solid #00d4aa;border-radius:16px;padding:14px 16px;align-items:center;gap:12px;box-shadow:0 8px 32px rgba(0,212,170,.25);font-family:'Outfit',sans-serif;animation:slideUp .3s ease">
-  <style>@keyframes slideUp{from{transform:translateY(80px);opacity:0}to{transform:translateY(0);opacity:1}}</style>
-  <img src="icons/icon-192.png" style="width:44px;height:44px;border-radius:10px;flex-shrink:0" onerror="this.style.display='none'">
+  <img src="icons/icon-192.png" style="width:44px;height:44px;border-radius:10px;flex-shrink:0" onerror="this.style.background='linear-gradient(135deg,#00d4aa,#0080ff)'">
   <div style="flex:1;min-width:0">
     <div style="font-size:14px;font-weight:700;color:#e8f0fe">Install ArthaDesk</div>
     <div style="font-size:11px;color:#5a7a9a;font-family:monospace;margin-top:2px">Add to home screen as an app</div>
