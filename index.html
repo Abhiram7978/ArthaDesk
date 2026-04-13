@@ -546,6 +546,489 @@ select.form-control option{background:var(--surface)}
   window.SUPABASE_ANON_KEY = 'sb_publishable_cKcA5vu3hJ_-do9Dd82Rgg_cyqRKppl';
   window.ARTHADESK_CONFIG  = { appName:'ArthaDesk', version:'3.9', localCache:true, syncInterval:30000 };
   </script>
+<script>
+/* ArthaDesk Sync Layer v6 — injected early, before main app */
+/**
+ * ArthaDesk — Supabase Sync Layer v6.0
+ * ═══════════════════════════════════════════════════════════════
+ * STRATEGY: Proxy localStorage + intercept ALL writes/reads
+ * 
+ * HOW IT WORKS:
+ *   1. On login → pull ALL user data from Supabase into localStorage
+ *   2. Intercept ALL localStorage.setItem calls → mirror to Supabase
+ *   3. Supabase realtime → on change from another device → update
+ *      localStorage AND re-render UI
+ *   4. Original app code runs unchanged — it thinks it's using 
+ *      localStorage but every write goes to Supabase too
+ *
+ * This script must run BEFORE the main app script.
+ * It is injected as the FIRST script in <head>.
+ * ═══════════════════════════════════════════════════════════════
+ */
+(function() {
+  'use strict';
+
+  // ── Only intercept arthadesk_ keys ─────────────────────────
+  const PREFIX = 'arthadesk_';
+  const ADE_PREFIXES = ['arthadesk_', 'ade_'];
+  
+  function isAppKey(key) {
+    if (!key) return false;
+    return ADE_PREFIXES.some(p => key.startsWith(p));
+  }
+
+  // ── State ───────────────────────────────────────────────────
+  let _sb = null;           // Supabase client
+  let _uid = null;          // approved_users.id
+  let _rtChannel = null;    // realtime channel
+  let _writing = false;     // prevent realtime→write loop
+  let _ready = false;       // Supabase ready?
+  let _pendingWrites = [];  // writes queued before login
+
+  // ── Init Supabase (config injected before this script) ─────
+  function _initSB() {
+    if (!window.SUPABASE_URL || window.SUPABASE_URL.includes('YOUR_PROJECT')) return;
+    if (!window.supabase?.createClient) return;
+    _sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, {
+      realtime: { params: { eventsPerSecond: 10 } }
+    });
+    window._supabaseClient = _sb;
+    _ready = true;
+    console.log('[ArthaDesk v6] Supabase ready ✅');
+  }
+
+  // Try to init now; if supabase SDK not loaded yet, wait for it
+  if (window.supabase?.createClient) {
+    _initSB();
+  } else {
+    // SDK loads async — init when it's ready
+    const _checkInterval = setInterval(() => {
+      if (window.supabase?.createClient) {
+        clearInterval(_checkInterval);
+        _initSB();
+      }
+    }, 50);
+  }
+
+  // ── INTERCEPT localStorage ──────────────────────────────────
+  const _realLS = window.localStorage; // keep reference to real localStorage
+  
+  const _lsProxy = {
+    getItem(key) {
+      return _realLS.getItem(key);
+    },
+    setItem(key, value) {
+      _realLS.setItem(key, value);
+      // Mirror to Supabase for app keys
+      if (isAppKey(key) && _uid && !_writing) {
+        _supabaseSave(key, value);
+      }
+    },
+    removeItem(key) {
+      _realLS.removeItem(key);
+      if (isAppKey(key) && _uid && !_writing) {
+        _supabaseDelete(key);
+      }
+    },
+    clear() {
+      _realLS.clear();
+    },
+    key(n) { return _realLS.key(n); },
+    get length() { return _realLS.length; }
+  };
+
+  // Proxy localStorage (catches ALL direct setItem calls)
+  try {
+    Object.defineProperty(window, 'localStorage', {
+      get: () => _lsProxy,
+      configurable: true
+    });
+    console.log('[ArthaDesk v6] localStorage proxy active ✅');
+  } catch(e) {
+    console.warn('[ArthaDesk v6] Could not proxy localStorage:', e.message);
+  }
+
+  // ── SUPABASE WRITE ──────────────────────────────────────────
+  function _supabaseSave(key, rawValue) {
+    if (!_sb || !_uid) return;
+    let parsed;
+    try { parsed = JSON.parse(rawValue); } catch(_) { parsed = rawValue; }
+    _sb.from('app_data')
+      .upsert(
+        { user_id: _uid, data_key: key, data_value: parsed,
+          updated_at: new Date().toISOString() },
+        { onConflict: 'user_id,data_key' }
+      )
+      .then(({ error }) => {
+        if (error) console.error('[sb.save] key:', key, error.message);
+      });
+  }
+
+  function _supabaseDelete(key) {
+    if (!_sb || !_uid) return;
+    _sb.from('app_data').delete()
+      .match({ user_id: _uid, data_key: key })
+      .then(({ error }) => { if (error) console.error('[sb.del]', error.message); });
+  }
+
+  // ── PULL ALL USER DATA FROM SUPABASE INTO localStorage ──────
+  async function _pullFromSupabase(uid) {
+    if (!_sb) return false;
+    const { data, error } = await _sb
+      .from('app_data')
+      .select('data_key, data_value')
+      .eq('user_id', uid);
+
+    if (error) { console.error('[pull]', error.message); return false; }
+    if (!data?.length) { console.log('[pull] No data in Supabase yet.'); return false; }
+
+    _writing = true;
+    data.forEach(row => {
+      try {
+        _realLS.setItem(row.data_key, JSON.stringify(row.data_value));
+      } catch(_) {}
+    });
+    _writing = false;
+
+    console.log('[ArthaDesk v6] Pulled', data.length, 'keys from Supabase ✅');
+    return true;
+  }
+
+  // ── PUSH ALL localStorage TO SUPABASE ───────────────────────
+  async function _pushToSupabase(uid) {
+    if (!_sb) return;
+    const rows = [];
+    for (let i = 0; i < _realLS.length; i++) {
+      const key = _realLS.key(i);
+      if (!isAppKey(key)) continue;
+      try {
+        const val = JSON.parse(_realLS.getItem(key));
+        rows.push({ user_id: uid, data_key: key, data_value: val,
+                    updated_at: new Date().toISOString() });
+      } catch(_) {}
+    }
+    if (!rows.length) return;
+
+    // Batch upsert in chunks of 50
+    for (let i = 0; i < rows.length; i += 50) {
+      const chunk = rows.slice(i, i + 50);
+      const { error } = await _sb.from('app_data')
+        .upsert(chunk, { onConflict: 'user_id,data_key' });
+      if (error) console.error('[push chunk]', error.message);
+    }
+    console.log('[ArthaDesk v6] Pushed', rows.length, 'keys to Supabase ✅');
+  }
+
+  // ── REALTIME ────────────────────────────────────────────────
+  function _startRealtime(uid) {
+    if (_rtChannel) { _sb.removeChannel(_rtChannel); _rtChannel = null; }
+
+    _rtChannel = _sb.channel('ad_sync_' + uid)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'app_data',
+        filter: `user_id=eq.${uid}`
+      }, (payload) => {
+        if (_writing) return;
+        const key = payload.new?.data_key || payload.old?.data_key;
+        if (!key) return;
+
+        console.log('[Realtime] Change:', payload.eventType, key);
+        _writing = true;
+
+        if (payload.eventType === 'DELETE') {
+          _realLS.removeItem(key);
+        } else {
+          try {
+            _realLS.setItem(key, JSON.stringify(payload.new.data_value));
+          } catch(_) {}
+        }
+        _writing = false;
+
+        // If this is the active company data, reload it
+        if (window._activeCompanyKey === key) {
+          _reloadCompanyState();
+        }
+
+        _pulse(); // show sync dot
+      })
+      .subscribe(status => {
+        console.log('[Realtime]', status);
+        const dot = document.getElementById('_ad_rt_dot');
+        if (dot) {
+          dot.style.background = status === 'SUBSCRIBED' ? '#22c55e' : '#fbbf24';
+          dot.title = status === 'SUBSCRIBED' ? '🟢 Live sync active' : '🟡 Connecting...';
+        }
+      });
+  }
+
+  function _reloadCompanyState() {
+    try {
+      // Reload active company data into memory
+      if (window._activeCompanyKey && typeof loadCompanyState === 'function') {
+        const cName = (window.registeredCompanies || []).find(c =>
+          typeof companyKey === 'function' && companyKey(c.name) === window._activeCompanyKey
+        );
+        if (cName) loadCompanyState(cName.name);
+      }
+      // Re-render
+      ['renderDashboard','renderAllMasters','rebuildInvoiceListUI',
+       'rebuildPurchaseListUI','rebuildReceiptListUI','rebuildPaymentListUI',
+       'updateDashInfoBar'].forEach(fn => {
+        if (typeof window[fn] === 'function') {
+          try { window[fn](); } catch(_) {}
+        }
+      });
+    } catch(e) { console.error('[reloadCompanyState]', e.message); }
+  }
+
+  function _pulse() {
+    let dot = document.getElementById('_ad_rt_dot');
+    if (!dot) return;
+    dot.style.transform = 'scale(2)';
+    dot.style.boxShadow = '0 0 12px #00d4aa';
+    setTimeout(() => {
+      dot.style.transform = 'scale(1)';
+      dot.style.boxShadow = '0 0 8px #22c55e';
+    }, 500);
+  }
+
+  // ── SYNC INDICATOR DOT ──────────────────────────────────────
+  function _addSyncDot() {
+    if (document.getElementById('_ad_rt_dot')) return;
+    const dot = document.createElement('div');
+    dot.id = '_ad_rt_dot';
+    dot.style.cssText = [
+      'position:fixed', 'bottom:8px', 'left:8px',
+      'width:10px', 'height:10px', 'border-radius:50%',
+      'background:#fbbf24', 'z-index:99999',
+      'box-shadow:0 0 8px #fbbf24', 'transition:all .4s',
+      'cursor:pointer'
+    ].join(';');
+    dot.title = 'Connecting to live sync...';
+    dot.onclick = () => {
+      if (typeof showToast === 'function')
+        showToast('🟢 Supabase live sync active', 'success');
+    };
+    document.body.appendChild(dot);
+  }
+
+  // ── HIDE REGISTER ───────────────────────────────────────────
+  const _regStyle = document.createElement('style');
+  _regStyle.textContent = [
+    '#loginScreen .auth-footer-link{display:none!important}',
+    '#registerScreen{display:none!important}',
+  ].join('\n');
+  document.head.appendChild(_regStyle);
+
+  window.showRegister = () => {
+    if (typeof showToast === 'function')
+      showToast('❌ Contact admin to create an account.', 'danger');
+  };
+  window.doRegister = window.showRegister;
+
+  // ── OVERRIDE doLogin ────────────────────────────────────────
+  // Wait for DOM, then override
+  function _attachLogin() {
+    window.doLogin = async function() {
+      const emailEl = document.getElementById('loginEmail');
+      const pwdEl   = document.getElementById('loginPassword');
+      const email   = (emailEl?.value || '').trim().toLowerCase();
+      const pwd     = (pwdEl?.value   || '');
+
+      const errEl = document.getElementById('loginError');
+      if (errEl) { errEl.classList.remove('show'); }
+
+      if (!email || !pwd) {
+        if (errEl) { errEl.textContent = '❌ Enter email and password.'; errEl.classList.add('show'); }
+        return;
+      }
+
+      if (!_sb) {
+        if (errEl) { errEl.textContent = '❌ Not connected to server. Check internet.'; errEl.classList.add('show'); }
+        return;
+      }
+
+      const btn = document.querySelector('#loginScreen .auth-btn-primary') ||
+                  document.querySelector('#loginScreen button[onclick*="doLogin"]');
+      if (btn) { btn._orig = btn.textContent; btn.textContent = '⏳ Verifying…'; btn.disabled = true; }
+
+      try {
+        // 1. Check approved_users
+        const { data: rows, error } = await _sb
+          .from('approved_users').select('*').eq('email', email).limit(1);
+
+        if (btn) { btn.textContent = btn._orig || 'Sign In'; btn.disabled = false; }
+
+        if (error)        { _setErr('loginError', '❌ Server error. Try again.'); return; }
+        if (!rows?.length){ _setErr('loginError', '❌ Account not found. Contact admin.'); return; }
+
+        const user = rows[0];
+        if (!user.is_active){ _setErr('loginError', '🚫 Account blocked. Contact admin.'); return; }
+        if (user.password !== pwd){ _setErr('loginError', '❌ Incorrect password.'); return; }
+
+        // ✅ Login success
+        _uid = user.id;
+        window._approvedUserId = user.id;
+        window.currentUser = { id: user.id, email: user.email, name: user.full_name, isNew: false };
+
+        // Set companies from admin assignment
+        const assigned = (user.assigned_companies || []).map(n => ({ name: n, gstin: '', city: '' }));
+        window.registeredCompanies = assigned;
+
+        // Save session to real localStorage (bypass proxy to avoid Supabase loop)
+        _writing = true;
+        _realLS.setItem('arthadesk_active_user', JSON.stringify(window.currentUser));
+        _realLS.setItem('arthadesk_companies', JSON.stringify(window.registeredCompanies));
+        _writing = false;
+
+        // 2. Pull ALL data from Supabase → localStorage
+        const hadData = await _pullFromSupabase(user.id);
+
+        // If this device has local data and Supabase is empty, push to Supabase
+        if (!hadData) {
+          await _pushToSupabase(user.id);
+        }
+
+        // 3. Start realtime
+        _startRealtime(user.id);
+        _addSyncDot();
+
+        // 4. Update company list in case Supabase has newer data
+        const latestCompanies = window.blLoad('arthadesk_companies', assigned);
+        window.registeredCompanies = Array.isArray(latestCompanies) ? latestCompanies : assigned;
+
+        // 5. Navigate
+        if (window.registeredCompanies.length > 0) {
+          try { showCompanyList(); } catch(_) {}
+        } else {
+          if (typeof showToast === 'function')
+            showToast('⚠️ No companies assigned. Contact admin.', 'danger');
+        }
+
+      } catch(err) {
+        if (btn) { btn.textContent = btn._orig || 'Sign In'; btn.disabled = false; }
+        _setErr('loginError', '❌ ' + err.message);
+      }
+    };
+  }
+
+  function _setErr(id, msg) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.add('show');
+  }
+
+  // ── OVERRIDE doLogout ────────────────────────────────────────
+  window.doLogout = function() {
+    if (_rtChannel && _sb) { _sb.removeChannel(_rtChannel); _rtChannel = null; }
+    _uid = null;
+    window._approvedUserId = null;
+    window.currentUser = null;
+    window.registeredCompanies = [];
+    // Clear ALL localStorage on logout — Supabase is source of truth
+    _writing = true;
+    _realLS.clear();
+    _writing = false;
+    if (typeof showLogin === 'function') showLogin();
+    if (typeof showToast === 'function') showToast('Signed out. Local data cleared.', 'success');
+  };
+
+  // ── OVERRIDE doForgotPwd ─────────────────────────────────────
+  window.doForgotPwd = function() {
+    if (typeof showToast === 'function')
+      showToast('Contact your admin to reset your password.', 'success');
+    const el = document.getElementById('forgotSuccess');
+    if (el) el.classList.add('show');
+    setTimeout(() => { if (typeof showLogin === 'function') showLogin(); }, 2500);
+  };
+
+  // ── SESSION RESTORE ──────────────────────────────────────────
+  // Override the original startup to always check Supabase first
+  window.addEventListener('load', async function() {
+    _attachLogin();
+    _addSyncDot();
+
+    // Read saved session from real localStorage
+    let savedUser = null;
+    try { savedUser = JSON.parse(_realLS.getItem('arthadesk_active_user')); } catch(_) {}
+    if (!savedUser?.email) return;
+
+    // Wait for Supabase to init
+    let attempts = 0;
+    while (!_ready && attempts++ < 40) await new Promise(r => setTimeout(r, 50));
+    if (!_sb) return;
+
+    try {
+      // Verify user still active
+      const { data: rows } = await _sb
+        .from('approved_users').select('*')
+        .eq('email', savedUser.email).eq('is_active', true).limit(1);
+
+      if (!rows?.length) {
+        _realLS.removeItem('arthadesk_active_user');
+        if (typeof showToast === 'function')
+          showToast('⚠️ Access revoked. Contact admin.', 'danger');
+        return;
+      }
+
+      const user = rows[0];
+      _uid = user.id;
+      window._approvedUserId = user.id;
+      window.currentUser = { id: user.id, email: user.email, name: user.full_name, isNew: false };
+
+      const assigned = (user.assigned_companies || []).map(n => ({ name: n, gstin: '', city: '' }));
+      window.registeredCompanies = assigned;
+
+      // Pull fresh data from Supabase
+      const hadData = await _pullFromSupabase(user.id);
+      if (!hadData) await _pushToSupabase(user.id);
+
+      // Start realtime
+      _startRealtime(user.id);
+
+      // Navigate
+      const companies = window.blLoad('arthadesk_companies', assigned);
+      window.registeredCompanies = Array.isArray(companies) ? companies : assigned;
+
+      if (window.registeredCompanies.length > 0) {
+        try { showCompanyList(); } catch(_) {}
+      }
+    } catch(e) {
+      console.error('[SessionRestore]', e.message);
+    }
+  });
+
+  // Override blSave / blLoad / blRemove (for backward compat)
+  window.blSave = function(key, data) {
+    try { _realLS.setItem(key, JSON.stringify(data)); } catch(_) {}
+    // setItem proxy handles Supabase write automatically
+  };
+  window.blLoad = function(key, fallback) {
+    try {
+      const r = _realLS.getItem(key);
+      if (r !== null) return JSON.parse(r);
+    } catch(_) {}
+    return fallback;
+  };
+  window.blRemove = function(key) {
+    try { _realLS.removeItem(key); } catch(_) {}
+    // removeItem proxy handles Supabase delete
+  };
+
+  // Company/user list
+  window.saveCompanyList = () => window.blSave('arthadesk_companies', window.registeredCompanies || []);
+  window.loadCompanyList = () => {
+    const l = window.blLoad('arthadesk_companies', []);
+    window.registeredCompanies = Array.isArray(l) ? l : [];
+  };
+  window.saveUserList = () => {};
+  window.loadUserList = () => {};
+
+  console.log('[ArthaDesk v6] Layer loaded — localStorage proxy active ✅');
+})();
+
+</script>
 <link rel="icon" type="image/png" href="data:image/png;base64,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">
 </head>
 <body>
@@ -7183,13 +7666,8 @@ var ACTIVE_USER_KEY_EARLY = BL_PREFIX_EARLY + 'active_user';
 var USERS_KEY_EARLY       = BL_PREFIX_EARLY + 'users';
 var COMPANIES_KEY_EARLY   = BL_PREFIX_EARLY + 'companies';
 
-// Safe early localStorage read (before full engine loads)
-function _earlyLoad(key, fallback) {
-  try {
-    var raw = localStorage.getItem(key);
-    return raw !== null ? JSON.parse(raw) : fallback;
-  } catch(e) { return fallback; }
-}
+// _earlyLoad removed — Supabase layer handles all data loading
+function _earlyLoad(key, fallback) { return fallback; }
 
 // Auto-detect current Financial Year (India: Apr–Mar)
 function getAutoFY() {
@@ -7202,12 +7680,12 @@ function getAutoFY() {
 var selectedFY = getAutoFY();
 
 // ================== SAFE STARTUP ==================
+// Session restore is handled by Supabase Layer v6
+// This just initialises UI elements
 window.addEventListener('load', function() {
   try {
     setupMobileNav();
     updateMobileNavActive('dashboard');
-
-    // Safe DOM init
     var invCreate = document.getElementById('inv-create');
     if (invCreate) invCreate.style.display = 'none';
     var invList = document.getElementById('inv-list');
@@ -7216,112 +7694,100 @@ window.addEventListener('load', function() {
     if (tcsSec) tcsSec.style.display = 'none';
     var tdsSec = document.getElementById('tds-sec');
     if (tdsSec) tdsSec.style.display = 'block';
-
-    // ── RESTORE SESSION (using early-safe loader) ─────────────
-    var savedUser = _earlyLoad(ACTIVE_USER_KEY_EARLY, null);
-    if (savedUser && savedUser.email) {
-      currentUser = savedUser;
-      try { loadCompanyList(); } catch(e) { registeredCompanies = []; }
-      if (registeredCompanies && registeredCompanies.length > 0) {
-        try { showCompanyList(); } catch(e) { showLogin(); }
-        return;
-      }
-    }
-
-    // Fresh start
+    // UI init only — Supabase layer handles auth + data restore
     try { renderAllMasters(); } catch(e) {}
     try { addItemRow(); addItemRow(); } catch(e) {}
-
-  } catch(globalErr) {
-    // Last-resort: if anything above crashes, show login screen
-    console.error('ArthaDesk startup error:', globalErr);
-    try { showLogin(); } catch(e) {}
+  } catch(e) {
+    console.error('ArthaDesk startup error:', e);
+    try { showLogin(); } catch(_) {}
   }
 });
 
 
 // ╔══════════════════════════════════════════════════════════════╗
-// ║          ARTHADESK — PERSISTENCE ENGINE v2                  ║
-// ║  PRIMARY  : IndexedDB  (~500 MB–1 GB)                       ║
-// ║  FALLBACK : localStorage (5–10 MB)                          ║
-// ║  DEVICE   : File System Access API (real folder on device)  ║
+// ║   ARTHADESK — SUPABASE-ONLY STORAGE ENGINE v3              ║
+// ║   localStorage = temporary session cache only              ║
+// ║   Supabase     = single source of truth                    ║
 // ╚══════════════════════════════════════════════════════════════╝
 
-// Alias the early-declared keys (same values, single source of truth)
-var BL_PREFIX         = BL_PREFIX_EARLY;
-var USERS_KEY         = USERS_KEY_EARLY;
-var COMPANIES_KEY     = COMPANIES_KEY_EARLY;
-var ACTIVE_USER_KEY   = ACTIVE_USER_KEY_EARLY;
+// All keys use this prefix
+var BL_PREFIX       = 'arthadesk_';
+var USERS_KEY       = BL_PREFIX + 'users';
+var COMPANIES_KEY   = BL_PREFIX + 'companies';
+var ACTIVE_USER_KEY = BL_PREFIX + 'active_user';
 var _activeCompanyKey = null;
 
-// ── INDEXEDDB SETUP ───────────────────────────────────────────
-var _idb = null;          // IndexedDB instance (null until opened)
-var _idbReady = false;    // true once DB is open
-var _idbPending = [];     // callbacks waiting for DB
-var IDB_NAME    = 'ArthaDeskProDB';
-var IDB_VERSION = 1;
-var IDB_STORE   = 'kv';   // simple key-value object store
-
-function _openIDB(cb) {
-  if (_idbReady) { cb(_idb); return; }
-  _idbPending.push(cb);
-  if (_idb === 'opening') return;
-  _idb = 'opening';
-  try {
-    var req = indexedDB.open(IDB_NAME, IDB_VERSION);
-    req.onupgradeneeded = function(e) {
-      var db = e.target.result;
-      if (!db.objectStoreNames.contains(IDB_STORE)) {
-        db.createObjectStore(IDB_STORE);
-      }
-    };
-    req.onsuccess = function(e) {
-      _idb = e.target.result;
-      _idbReady = true;
-      _updateStorageStatus('idb');
-      var cbs = _idbPending.slice(); _idbPending = [];
-      cbs.forEach(function(fn) { fn(_idb); });
-    };
-    req.onerror = function() {
-      // IndexedDB blocked/unavailable — fall back to localStorage
-      _idb = null; _idbReady = false;
-      _updateStorageStatus('ls');
-      var cbs = _idbPending.slice(); _idbPending = [];
-      cbs.forEach(function(fn) { fn(null); });
-    };
-  } catch(e) {
-    _idb = null; _idbReady = false;
-    _updateStorageStatus('ls');
-    var cbs = _idbPending.slice(); _idbPending = [];
-    cbs.forEach(function(fn) { fn(null); });
-  }
+// ── Supabase write (called by localStorage proxy in layer v6) ──
+// blSave: write to localStorage cache + Supabase via proxy
+function blSave(key, data) {
+  try { localStorage.setItem(key, JSON.stringify(data)); } catch(e) {}
+  // The localStorage proxy in layer v6 intercepts this setItem
+  // and mirrors it to Supabase automatically
 }
 
-// Open DB immediately on page load (guarded)
-try { _openIDB(function() {}); } catch(e) {}
+// blLoad: synchronous read from localStorage cache
+// (populated from Supabase on login by layer v6)
+function blLoad(key, fallback) {
+  try {
+    var raw = localStorage.getItem(key);
+    if (raw !== null) return JSON.parse(raw);
+  } catch(e) {}
+  return fallback;
+}
+
+// blRemove: remove from localStorage (proxy mirrors to Supabase)
+function blRemove(key) {
+  try { localStorage.removeItem(key); } catch(e) {}
+}
+
+// ── No-op stubs for removed storage systems ───────────────────
+function _openIDB(cb) { if(typeof cb==='function') cb(null); }
+function _idbExportAll(cb) { if(typeof cb==='function') cb({}); }
+function _idbImportAll(data, cb) { if(typeof cb==='function') cb(); }
+function _fsa_scheduleFlush() {}
+function fsaLinkFile() {
+  if(typeof showToast==='function')
+    showToast('ℹ️ File sync removed — data is in Supabase cloud', 'success');
+}
+var _fsaSupported = false;
+var _fsaLinked    = false;
+var _idb          = null;
+var _idbReady     = false;
+var _idbPending   = [];
+var IDB_NAME      = 'ArthaDeskProDB';
+var IDB_VERSION   = 1;
+var IDB_STORE     = 'kv';
+
+function _updateStorageStatus(mode) {
+  var el = document.getElementById('storage-status-badge');
+  if (!el) return;
+  el.innerHTML = '<span style="color:var(--accent);font-weight:700">☁️ Supabase Cloud (Unlimited)</span>';
+}
+function _updateFsaStatus() {}
+function initStorageStatusUI() { _updateStorageStatus('sb'); }
+function _estimateStorageUsed() {
+  var el = document.getElementById('storage-used-display');
+  if (el) el.innerHTML = '<strong style="color:var(--accent)">☁️ Stored in Supabase — no device limit</strong>';
+}
+
 
 // ── STORAGE HELPERS (IndexedDB PRIMARY, localStorage FALLBACK) ─
 // blSave / blLoad / blRemove are ASYNC-aware but also maintain
 // a localStorage mirror so that blLoad() can remain synchronous
 // (needed for app startup / existing call sites).
 
+// ── SUPABASE-ONLY STORAGE ─────────────────────────────────────
+// localStorage = fast session cache (cleared on logout)
+// Supabase     = permanent cloud database (single source of truth)
+// The localStorage proxy in Layer v6 mirrors all writes to Supabase
+
 function blSave(key, data) {
-  // 1. Always write to localStorage as fast synchronous mirror
+  // Write to localStorage — Layer v6 proxy mirrors to Supabase
   try { localStorage.setItem(key, JSON.stringify(data)); } catch(e) {}
-  // 2. Also write to IndexedDB asynchronously (primary store)
-  _openIDB(function(db) {
-    if (!db) return;
-    try {
-      var tx = db.transaction(IDB_STORE, 'readwrite');
-      tx.objectStore(IDB_STORE).put(JSON.stringify(data), key);
-    } catch(e) {}
-  });
-  // 3. If File System Access is linked, schedule a debounced flush
-  _fsa_scheduleFlush();
 }
 
 function blLoad(key, fallback) {
-  // Synchronous read from localStorage mirror (always available instantly)
+  // Read from localStorage cache (pre-populated from Supabase on login)
   try {
     var raw = localStorage.getItem(key);
     if (raw !== null) return JSON.parse(raw);
@@ -7330,318 +7796,14 @@ function blLoad(key, fallback) {
 }
 
 function blRemove(key) {
+  // Remove from localStorage — Layer v6 proxy mirrors to Supabase
   try { localStorage.removeItem(key); } catch(e) {}
-  _openIDB(function(db) {
-    if (!db) return;
-    try {
-      var tx = db.transaction(IDB_STORE, 'readwrite');
-      tx.objectStore(IDB_STORE).delete(key);
-    } catch(e) {}
-  });
-  _fsa_scheduleFlush();
 }
 
-// ── INDEXEDDB BULK EXPORT (for backup & FSA) ──────────────────
-function _idbExportAll(cb) {
-  _openIDB(function(db) {
-    if (!db) {
-      // Fallback: export from localStorage
-      var all = {};
-      for (var i = 0; i < localStorage.length; i++) {
-        var k = localStorage.key(i);
-        if (k && k.startsWith(BL_PREFIX)) {
-          try { all[k] = JSON.parse(localStorage.getItem(k)); }
-          catch(e) { all[k] = localStorage.getItem(k); }
-        }
-      }
-      cb(all); return;
-    }
-    try {
-      var tx = db.transaction(IDB_STORE, 'readonly');
-      var store = tx.objectStore(IDB_STORE);
-      var result = {};
-      var req = store.openCursor();
-      req.onsuccess = function(e) {
-        var cursor = e.target.result;
-        if (cursor) {
-          if (cursor.key && cursor.key.toString().startsWith(BL_PREFIX)) {
-            try { result[cursor.key] = JSON.parse(cursor.value); }
-            catch(ex) { result[cursor.key] = cursor.value; }
-          }
-          cursor.continue();
-        } else {
-          cb(result);
-        }
-      };
-      req.onerror = function() { cb({}); };
-    } catch(e) { cb({}); }
-  });
-}
+// ── INDEXEDDB — REMOVED (Supabase handles persistence) ───────
 
-// ── INDEXEDDB BULK IMPORT (for restore) ───────────────────────
-function _idbImportAll(dataObj, cb) {
-  // 1. Write to localStorage immediately (synchronous)
-  Object.keys(dataObj).forEach(function(k) {
-    try { localStorage.setItem(k, JSON.stringify(dataObj[k])); } catch(e) {}
-  });
-  // 2. Write to IndexedDB
-  _openIDB(function(db) {
-    if (!db) { if (cb) cb(); return; }
-    try {
-      var tx = db.transaction(IDB_STORE, 'readwrite');
-      var store = tx.objectStore(IDB_STORE);
-      Object.keys(dataObj).forEach(function(k) {
-        store.put(JSON.stringify(dataObj[k]), k);
-      });
-      tx.oncomplete = function() { if (cb) cb(); };
-      tx.onerror    = function() { if (cb) cb(); };
-    } catch(e) { if (cb) cb(); }
-  });
-}
-
-// ── FILE SYSTEM ACCESS API ────────────────────────────────────
-var _fsaFileHandle   = null;   // FileSystemFileHandle
-var _fsaLinked       = false;  // true when user has chosen a file
-var _fsaFlushTimer   = null;
-var _fsaSupported    = typeof window !== 'undefined' && 'showSaveFilePicker' in window;
-var FSA_FILENAME     = 'ArthaDeskPro_Data.json';
-
-// Show a one-time picker for user to choose/create the save file
-function fsaLinkFile() {
-  if (!_fsaSupported) {
-    showToast('⚠️ File System Access not supported on this browser. Use Chrome/Edge.', 'danger');
-    return;
-  }
-  window.showSaveFilePicker({
-    suggestedName: FSA_FILENAME,
-    types: [{ description: 'ArthaDesk Data File', accept: { 'application/json': ['.json'] } }]
-  }).then(function(handle) {
-    _fsaFileHandle = handle;
-    _fsaLinked = true;
-    _updateStorageStatus('fsa');
-    // Save handle name to localStorage so user knows it's linked
-    try { localStorage.setItem(BL_PREFIX + 'fsa_filename', handle.name); } catch(e) {}
-    showToast('✅ Device file linked: ' + handle.name + ' — data will auto-save here!', 'success');
-    _fsa_flush(); // write immediately
-  }).catch(function(e) {
-    if (e.name !== 'AbortError') showToast('File link failed: ' + e.message, 'danger');
-  });
-}
-
-// Open an existing ArthaDesk file from device
-function fsaOpenFile() {
-  if (!_fsaSupported) {
-    showToast('⚠️ File System Access not supported. Use Chrome/Edge.', 'danger');
-    return;
-  }
-  window.showOpenFilePicker({
-    types: [{ description: 'ArthaDesk Data File', accept: { 'application/json': ['.json'] } }],
-    multiple: false
-  }).then(function(handles) {
-    var handle = handles[0];
-    return handle.getFile().then(function(file) {
-      return file.text().then(function(text) {
-        return { handle: handle, text: text };
-      });
-    });
-  }).then(function(result) {
-    var data = JSON.parse(result.text);
-    _fsaFileHandle = result.handle;
-    _fsaLinked = true;
-    _updateStorageStatus('fsa');
-    try { localStorage.setItem(BL_PREFIX + 'fsa_filename', result.handle.name); } catch(e) {}
-    _idbImportAll(data, function() {
-      // Reload app state
-      var userKey = BL_PREFIX + 'active_user';
-      var user = blLoad(userKey, null);
-      if (user) {
-        showToast('✅ File loaded from device! All data restored.', 'success');
-        setTimeout(function() { location.reload(); }, 1200);
-      } else {
-        showToast('✅ File loaded. Please log in.', 'success');
-        setTimeout(function() { location.reload(); }, 1200);
-      }
-    });
-  }).catch(function(e) {
-    if (e.name !== 'AbortError') showToast('Could not open file: ' + e.message, 'danger');
-  });
-}
-
-// Debounced flush: write all IndexedDB data to device file
-function _fsa_scheduleFlush() {
-  if (!_fsaLinked || !_fsaFileHandle) return;
-  if (_fsaFlushTimer) clearTimeout(_fsaFlushTimer);
-  _fsaFlushTimer = setTimeout(_fsa_flush, 2000); // flush 2s after last save
-}
-
-function _fsa_flush() {
-  if (!_fsaLinked || !_fsaFileHandle) return;
-  _idbExportAll(function(allData) {
-    _fsaFileHandle.createWritable().then(function(writable) {
-      var json = JSON.stringify(allData, null, 2);
-      return writable.write(json).then(function() {
-        return writable.close();
-      });
-    }).then(function() {
-      _updateFsaStatus('synced');
-    }).catch(function(e) {
-      _updateFsaStatus('error');
-    });
-  });
-}
-
-// ── STORAGE STATUS UI ─────────────────────────────────────────
-function _updateStorageStatus(mode) {
-  // Update badge in settings page
-  var el = document.getElementById('storage-status-badge');
-  if (!el) return;
-  var msgs = {
-    idb: { icon:'🟢', text:'IndexedDB Active (~500 MB)', color:'var(--accent)' },
-    ls:  { icon:'🟡', text:'localStorage (5 MB limit)', color:'var(--gold)' },
-    fsa: { icon:'🔵', text:'Device File Linked ✅', color:'var(--accent2)' }
-  };
-  var m = msgs[mode] || msgs.ls;
-  el.innerHTML = '<span style="color:' + m.color + ';font-weight:700">' + m.icon + ' ' + m.text + '</span>';
-}
-
-function _updateFsaStatus(state) {
-  var el = document.getElementById('fsa-sync-status');
-  if (!el) return;
-  if (state === 'synced') {
-    var now = new Date();
-    el.innerHTML = '✅ Last synced to device: ' + now.toLocaleTimeString();
-    el.style.color = 'var(--accent)';
-  } else if (state === 'error') {
-    el.innerHTML = '⚠️ Sync failed — file may have been moved';
-    el.style.color = 'var(--gold)';
-  }
-}
-
-function initStorageStatusUI() {
-  // Show current storage mode
-  if (_idbReady) _updateStorageStatus('idb');
-  else _updateStorageStatus('ls');
-  // Show FSA filename if previously linked
-  var fsaName = '';
-  try { fsaName = localStorage.getItem(BL_PREFIX + 'fsa_filename') || ''; } catch(e) {}
-  var fsaEl = document.getElementById('fsa-linked-filename');
-  if (fsaEl) fsaEl.textContent = fsaName ? ('Linked: ' + fsaName) : 'Not linked to any device file';
-  var fsaSup = document.getElementById('fsa-support-badge');
-  if (fsaSup) {
-    fsaSup.innerHTML = _fsaSupported
-      ? '<span style="color:var(--accent)">✅ Supported on this browser</span>'
-      : '<span style="color:var(--gold)">⚠️ Not supported — use Chrome or Edge</span>';
-  }
-  // Estimate storage used
-  _estimateStorageUsed();
-}
-
-function _estimateStorageUsed() {
-  var el = document.getElementById('storage-used-display');
-  if (!el) return;
-  // Navigator storage estimate (modern browsers)
-  if (navigator && navigator.storage && navigator.storage.estimate) {
-    navigator.storage.estimate().then(function(est) {
-      var used = (est.usage / 1024 / 1024).toFixed(2);
-      var quota = (est.quota / 1024 / 1024).toFixed(0);
-      if (el) el.innerHTML =
-        'Used: <strong style="color:var(--accent)">' + used + ' MB</strong>' +
-        ' of <strong>' + quota + ' MB</strong> available on this device';
-    }).catch(function() {
-      // Fallback: estimate from localStorage
-      var lsSize = 0;
-      try {
-        for (var k in localStorage) {
-          if (localStorage.hasOwnProperty(k)) lsSize += (localStorage[k].length + k.length) * 2;
-        }
-      } catch(e) {}
-      if (el) el.innerHTML = 'Approx. localStorage used: <strong>' + (lsSize/1024).toFixed(1) + ' KB</strong>';
-    });
-  } else {
-    var lsSize2 = 0;
-    try {
-      for (var k2 in localStorage) {
-        if (localStorage.hasOwnProperty(k2)) lsSize2 += (localStorage[k2].length + k2.length) * 2;
-      }
-    } catch(e2) {}
-    el.innerHTML = 'Approx. storage used: <strong>' + (lsSize2/1024).toFixed(1) + ' KB</strong>';
-  }
-}
-
-// Request persistent storage so browser never auto-clears IndexedDB (guarded)
-try {
-  if (navigator && navigator.storage && navigator.storage.persist) {
-    navigator.storage.persist().then(function(granted) {
-      if (granted) console.log('ArthaDesk: persistent storage granted');
-    }).catch(function() {});
-  }
-} catch(e) {}
-
-// ── COMPANY DATA KEY ──────────────────────────────────────────
-function companyKey(companyName) {
-  return BL_PREFIX + 'company_' + companyName.trim().toLowerCase().replace(/[^a-z0-9]/g,'_');
-}
-
-// ── AUTO-SAVE ALL APP STATE ───────────────────────────────────
-function autoSave() {
-  if (!_activeCompanyKey) return;
-  var state = {
-    // Counters
-    invoiceNo, purchaseNo, receiptNo, paymentNo, journalNo,
-    // Transaction logs
-    invoices, purchases, receipts, payments, txnLog,
-    // Masters
-    masterLedgers, masterParties, masterStock,
-    // Accumulators
-    gstrData, dashData,
-    // Company info fields (from page)
-    companyInfo: readCompanyInfoFields(),
-    // Financial Year
-    selectedFY: selectedFY,
-    // Timestamp
-    lastSaved: new Date().toISOString()
-  };
-  blSave(_activeCompanyKey, state);
-}
-
-// Read values from Company Info page fields
-function readCompanyInfoFields() {
-  function gv(id) { var el=document.getElementById(id); return el ? el.value : ''; }
-  function gs(id) { var el=document.getElementById(id); return el ? el.value : ''; }
-  return {
-    name:     gv('company-name'),
-    gstin:    gv('company-gstin'),
-    pan:      gv('company-pan'),
-    phone:    gv('company-phone'),
-    email:    gv('company-email'),
-    bankName: gv('company-bank'),
-    accountNo:gv('company-acc'),
-    ifsc:     gv('company-ifsc'),
-    address:  gv('company-addr')
-  };
-}
-
-// Restore values to Company Info page fields
-function writeCompanyInfoFields(info) {
-  if (!info) return;
-  function sv(id, val) { var el=document.getElementById(id); if(el && val) el.value=val; }
-  sv('company-name',  info.name);
-  sv('company-gstin', info.gstin);
-  sv('company-pan',   info.pan);
-  sv('company-phone', info.phone);
-  sv('company-email', info.email);
-  sv('company-bank',  info.bankName);
-  sv('company-acc',   info.accountNo);
-  sv('company-ifsc',  info.ifsc);
-  sv('company-addr',  info.address);
-  // Update topbar
-  if (info.name) {
-    var el=document.getElementById('companyShort');
-    if(el) el.textContent = info.name.split(' ').slice(0,2).join(' ');
-  }
-  // Update GST state detection
-  if (info.gstin) window._activeCompanyGstin = info.gstin;
-}
+// ── FILE SYSTEM ACCESS API — REMOVED (Supabase handles sync) ──
+// All FSA functions are no-ops; data lives in Supabase cloud
 
 // ── LOAD COMPANY STATE ────────────────────────────────────────
 function loadCompanyState(companyName) {
@@ -9586,14 +9748,7 @@ function performFormat(scope) {
       if (k && k.indexOf(BL_PREFIX) === 0) keysToRemove.push(k);
     }
     keysToRemove.forEach(function(k) { blRemove(k); });
-    // Also wipe IndexedDB completely
-    _openIDB(function(db) {
-      if (!db) return;
-      try {
-        var tx = db.transaction(IDB_STORE, 'readwrite');
-        tx.objectStore(IDB_STORE).clear();
-      } catch(e) {}
-    });
+    // IndexedDB removed — Supabase handles all storage
     // Wipe FSA link
     _fsaFileHandle = null; _fsaLinked = false;
     try { localStorage.removeItem(BL_PREFIX + 'fsa_filename'); } catch(e) {}
@@ -9958,73 +10113,10 @@ var _adeAuditLog    = [];   // audit_log for active company
 var _adePeriodLocks = [];   // period_locks for active company
 var _adeStockTxns   = [];   // stock_transactions for active company
 var _adeCompanyId   = null; // active company identifier
-var _adeDb          = null; // upgraded IDB handle
-var _adeDbReady     = false;
+// ── ADE — Supabase replaces IndexedDB ──────────────────────
+function adeOpenDb(cb) { if(typeof cb==='function') cb(null); }
 
-// ── Open / upgrade the ADE database ──────────────────────────
-function adeOpenDb(callback) {
-  if (_adeDbReady && _adeDb) { callback(_adeDb); return; }
-  try {
-    var req = indexedDB.open(ADE_DB_NAME, ADE_DB_VERSION);
 
-    req.onupgradeneeded = function(e) {
-      var db = e.target.result;
-      var oldVer = e.oldVersion;
-
-      // Preserve existing kv store (used by original engine)
-      if (!db.objectStoreNames.contains('kv')) {
-        db.createObjectStore('kv');
-      }
-
-      // Add new ADE stores only if they don't exist yet
-      if (!db.objectStoreNames.contains(STORE_VOUCHERS)) {
-        var vs = db.createObjectStore(STORE_VOUCHERS, { keyPath: 'id' });
-        vs.createIndex('by_company', 'companyId', { unique: false });
-        vs.createIndex('by_company_date', ['companyId', 'date'], { unique: false });
-        vs.createIndex('by_company_type', ['companyId', 'voucherType'], { unique: false });
-      }
-      if (!db.objectStoreNames.contains(STORE_JOURNALS)) {
-        var js = db.createObjectStore(STORE_JOURNALS, { keyPath: 'id' });
-        js.createIndex('by_company', 'companyId', { unique: false });
-        js.createIndex('by_voucher', 'voucherId', { unique: false });
-        js.createIndex('by_company_ledger', ['companyId', 'ledgerName'], { unique: false });
-        js.createIndex('by_company_date', ['companyId', 'date'], { unique: false });
-      }
-      if (!db.objectStoreNames.contains(STORE_AUDIT)) {
-        var as = db.createObjectStore(STORE_AUDIT, { keyPath: 'id' });
-        as.createIndex('by_company', 'companyId', { unique: false });
-        as.createIndex('by_entity', ['companyId', 'entityId'], { unique: false });
-      }
-      if (!db.objectStoreNames.contains(STORE_LOCKS)) {
-        var ls = db.createObjectStore(STORE_LOCKS, { keyPath: 'id' });
-        ls.createIndex('by_company', 'companyId', { unique: false });
-      }
-      if (!db.objectStoreNames.contains(STORE_STOCK_TXN)) {
-        var st = db.createObjectStore(STORE_STOCK_TXN, { keyPath: 'id' });
-        st.createIndex('by_company', 'companyId', { unique: false });
-        st.createIndex('by_product', ['companyId', 'productName'], { unique: false });
-        st.createIndex('by_voucher', 'voucherId', { unique: false });
-      }
-    };
-
-    req.onsuccess = function(e) {
-      _adeDb = e.target.result;
-      _adeDbReady = true;
-      console.log('[ADE] Database v3 ready');
-      callback(_adeDb);
-    };
-    req.onerror = function() {
-      console.warn('[ADE] IndexedDB upgrade failed — using in-memory fallback');
-      _adeDb = null; _adeDbReady = false;
-      callback(null);
-    };
-  } catch(err) {
-    console.warn('[ADE] IndexedDB error:', err);
-    callback(null);
-  }
-}
-
-// ── Derive company ID from active company key ─────────────────
 function adeGetCompanyId() {
   if (_activeCompanyKey) return _activeCompanyKey;
   if (_adeCompanyId) return _adeCompanyId;
@@ -12579,409 +12671,7 @@ else{setTimeout(_injectPDFBtns,900);}
 
 </script>
 
-<script>
-/**
- * ArthaDesk — Supabase Sync Layer v5.0
- * ═══════════════════════════════════════════════════════════
- * ROOT CAUSES FIXED:
- *   1. RLS was blocking all writes → fixed via sync-fix.sql
- *   2. blLoad() never read Supabase → now rehydrates on login
- *   3. Realtime didn't reload state → now calls loadCompanyState()
- *   4. Company data lived only in localStorage → now in Supabase
- *   5. rehydration didn't re-apply state → fixed
- * ═══════════════════════════════════════════════════════════
- */
-(function () {
-  'use strict';
 
-  if (!window.SUPABASE_URL || window.SUPABASE_URL.includes('YOUR_PROJECT')) {
-    console.warn('[ArthaDesk] Supabase not configured — local mode.'); return;
-  }
-
-  const { createClient } = window.supabase;
-  const sb = createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, {
-    realtime: { params: { eventsPerSecond: 10 } },
-    db: { schema: 'public' }
-  });
-  window._supabaseClient = sb;
-
-  let _uid = null;           // approved_users.id (string)
-  let _rtChannel = null;     // realtime channel
-  let _syncing = false;      // prevent save loops
-
-  /* ─────────────────────────────────────────────
-     HELPERS
-  ───────────────────────────────────────────── */
-  function toast(msg, type='success') {
-    if (typeof showToast === 'function') showToast(msg, type);
-  }
-  function setErr(id, msg) {
-    const el = document.getElementById(id);
-    if (!el) return; el.textContent = msg; el.classList.add('show');
-  }
-  function clearErr(id) {
-    const el = document.getElementById(id); if (el) el.classList.remove('show');
-  }
-
-  /* ─────────────────────────────────────────────
-     HIDE REGISTER — CSS + JS
-  ───────────────────────────────────────────── */
-  // Inject CSS to permanently hide register elements
-  const style = document.createElement('style');
-  style.textContent = `
-    #loginScreen .auth-footer-link { display:none !important; }
-    #registerScreen { display:none !important; }
-    a[onclick*="showRegister"], button[onclick*="showRegister"] { display:none !important; }
-  `;
-  document.head.appendChild(style);
-
-  window.showRegister = () => toast('❌ Contact admin to create an account.', 'danger');
-  window.doRegister   = () => toast('❌ Registration disabled. Admin controls access.', 'danger');
-
-  /* ─────────────────────────────────────────────
-     blSave — localStorage + Supabase
-  ───────────────────────────────────────────── */
-  window.blSave = function(key, data) {
-    // Always write to localStorage (fast read cache)
-    try { localStorage.setItem(key, JSON.stringify(data)); } catch(_) {}
-    // Write to Supabase if logged in
-    if (!_uid || _syncing) return;
-    sb.from('app_data')
-      .upsert(
-        { user_id: _uid, data_key: key, data_value: data,
-          updated_at: new Date().toISOString() },
-        { onConflict: 'user_id,data_key' }
-      )
-      .then(({ error }) => {
-        if (error) console.error('[blSave] Supabase error:', error.message, '| key:', key);
-      });
-  };
-
-  /* ─────────────────────────────────────────────
-     blLoad — localStorage (sync read cache)
-     Supabase data is loaded via rehydrateCache()
-  ───────────────────────────────────────────── */
-  window.blLoad = function(key, fallback) {
-    try {
-      const raw = localStorage.getItem(key);
-      if (raw !== null) return JSON.parse(raw);
-    } catch(_) {}
-    return fallback;
-  };
-
-  /* ─────────────────────────────────────────────
-     blRemove
-  ───────────────────────────────────────────── */
-  window.blRemove = function(key) {
-    try { localStorage.removeItem(key); } catch(_) {}
-    if (!_uid) return;
-    sb.from('app_data').delete()
-      .match({ user_id: _uid, data_key: key })
-      .then(({ error }) => { if (error) console.error('[blRemove]', error.message); });
-  };
-
-  /* ─────────────────────────────────────────────
-     REHYDRATE — Pull ALL user data from Supabase
-     into localStorage, then reload active company
-  ───────────────────────────────────────────── */
-  async function rehydrateAndReload(uid) {
-    console.log('[ArthaDesk] Rehydrating from Supabase...');
-    const { data, error } = await sb
-      .from('app_data')
-      .select('data_key, data_value')
-      .eq('user_id', uid);
-
-    if (error) {
-      console.error('[rehydrate] Error:', error.message);
-      return false;
-    }
-
-    if (!data || data.length === 0) {
-      console.log('[ArthaDesk] No data in Supabase yet for this user.');
-      return false;
-    }
-
-    // Write all Supabase data into localStorage
-    _syncing = true;
-    data.forEach(row => {
-      try {
-        localStorage.setItem(row.data_key, JSON.stringify(row.data_value));
-      } catch(_) {}
-    });
-    _syncing = false;
-
-    console.log('[ArthaDesk] Rehydrated', data.length, 'keys from Supabase');
-
-    // Now reload the active company state into memory
-    _reloadActiveCompany();
-    return true;
-  }
-
-  /* ─────────────────────────────────────────────
-     RELOAD ACTIVE COMPANY
-     After rehydration, re-apply state to memory
-  ───────────────────────────────────────────── */
-  function _reloadActiveCompany() {
-    try {
-      // Load company list
-      const companies = blLoad('arthadesk_companies', []);
-      if (Array.isArray(companies)) window.registeredCompanies = companies;
-
-      // If a company is currently open, reload its state
-      if (window._activeCompanyKey && typeof loadCompanyState === 'function') {
-        // Find company name from key
-        const companyName = (window.registeredCompanies || []).find(c => {
-          if (typeof companyKey === 'function') {
-            return companyKey(c.name) === window._activeCompanyKey;
-          }
-          return false;
-        });
-
-        if (companyName) {
-          loadCompanyState(companyName.name);
-        }
-      }
-
-      // Re-render UI
-      if (typeof renderDashboard  === 'function') try { renderDashboard();  } catch(_) {}
-      if (typeof renderAllMasters === 'function') try { renderAllMasters(); } catch(_) {}
-      if (typeof rebuildInvoiceListUI  === 'function') try { rebuildInvoiceListUI();  } catch(_) {}
-      if (typeof rebuildPurchaseListUI === 'function') try { rebuildPurchaseListUI(); } catch(_) {}
-      if (typeof rebuildReceiptListUI  === 'function') try { rebuildReceiptListUI();  } catch(_) {}
-      if (typeof rebuildPaymentListUI  === 'function') try { rebuildPaymentListUI();  } catch(_) {}
-
-      console.log('[ArthaDesk] UI refreshed from rehydrated data');
-    } catch(e) {
-      console.error('[_reloadActiveCompany]', e.message);
-    }
-  }
-
-  /* ─────────────────────────────────────────────
-     REALTIME SYNC
-     When another device saves data → update here
-  ───────────────────────────────────────────── */
-  function startRealtime(uid) {
-    if (_rtChannel) { sb.removeChannel(_rtChannel); _rtChannel = null; }
-
-    _rtChannel = sb.channel('arthadesk_sync_' + uid)
-      .on('postgres_changes', {
-        event  : '*',
-        schema : 'public',
-        table  : 'app_data',
-        filter : `user_id=eq.${uid}`
-      }, async (payload) => {
-        console.log('[Realtime] Change:', payload.eventType, payload.new?.data_key);
-
-        // Don't process our own saves (prevent loop)
-        if (_syncing) return;
-
-        // Update localStorage with the new value
-        _syncing = true;
-        if (payload.eventType === 'DELETE') {
-          try { localStorage.removeItem(payload.old?.data_key); } catch(_) {}
-        } else if (payload.new?.data_key) {
-          try {
-            localStorage.setItem(
-              payload.new.data_key,
-              JSON.stringify(payload.new.data_value)
-            );
-          } catch(_) {}
-
-          // Reload company state if the changed key is the active company
-          if (window._activeCompanyKey &&
-              payload.new.data_key === window._activeCompanyKey) {
-            _reloadActiveCompany();
-          }
-        }
-        _syncing = false;
-
-        // Show sync indicator
-        _showSyncPulse();
-      })
-      .subscribe(status => {
-        console.log('[Realtime] Status:', status);
-        const indicator = document.getElementById('_ad_sync_dot');
-        if (indicator) {
-          indicator.style.background = status === 'SUBSCRIBED' ? '#22c55e' : '#f59e0b';
-          indicator.title = status === 'SUBSCRIBED' ? 'Live sync active' : 'Connecting...';
-        }
-      });
-  }
-
-  function _showSyncPulse() {
-    // Create or flash a small sync indicator
-    let dot = document.getElementById('_ad_sync_dot');
-    if (!dot) {
-      dot = document.createElement('div');
-      dot.id = '_ad_sync_dot';
-      dot.style.cssText = [
-        'position:fixed', 'bottom:12px', 'left:12px', 'width:10px', 'height:10px',
-        'border-radius:50%', 'background:#22c55e', 'z-index:9999',
-        'box-shadow:0 0 8px #22c55e', 'transition:all .3s',
-        'cursor:pointer'
-      ].join(';');
-      dot.title = 'Live sync active';
-      document.body.appendChild(dot);
-    }
-    // Pulse animation
-    dot.style.transform = 'scale(1.8)';
-    dot.style.background = '#00d4aa';
-    setTimeout(() => {
-      dot.style.transform = 'scale(1)';
-      dot.style.background = '#22c55e';
-    }, 600);
-  }
-
-  function stopRealtime() {
-    if (_rtChannel) { sb.removeChannel(_rtChannel); _rtChannel = null; }
-  }
-
-  /* ─────────────────────────────────────────────
-     COMPANY / USER LIST
-  ───────────────────────────────────────────── */
-  window.saveCompanyList = () => blSave('arthadesk_companies', window.registeredCompanies || []);
-  window.loadCompanyList = () => {
-    const l = blLoad('arthadesk_companies', []);
-    window.registeredCompanies = Array.isArray(l) ? l : [];
-  };
-  window.saveUserList = () => {};
-  window.loadUserList = () => {};
-
-  /* ─────────────────────────────────────────────
-     doLogin — checks approved_users table
-  ───────────────────────────────────────────── */
-  window.doLogin = async function() {
-    const email = (document.getElementById('loginEmail')?.value || '').trim().toLowerCase();
-    const pwd   = (document.getElementById('loginPassword')?.value || '');
-    clearErr('loginError');
-
-    if (!email || !pwd) { setErr('loginError', '❌ Enter email and password.'); return; }
-
-    const btn = document.querySelector('#loginScreen .auth-btn-primary') ||
-                document.querySelector('#loginScreen button[onclick*="doLogin"]');
-    if (btn) { btn._orig = btn.textContent; btn.textContent = '⏳ Verifying…'; btn.disabled = true; }
-
-    try {
-      const { data: rows, error } = await sb
-        .from('approved_users').select('*').eq('email', email).limit(1);
-
-      if (btn) { btn.textContent = btn._orig || 'Sign In'; btn.disabled = false; }
-      if (error) { setErr('loginError', '❌ Server error. Try again.'); return; }
-      if (!rows?.length) { setErr('loginError', '❌ Account not found. Contact admin.'); return; }
-
-      const user = rows[0];
-      if (!user.is_active) { setErr('loginError', '🚫 Account blocked. Contact admin.'); return; }
-      if (user.password !== pwd) { setErr('loginError', '❌ Incorrect password.'); return; }
-
-      // ✅ Login success
-      _uid = user.id;
-      window._approvedUserId = user.id;
-      window.currentUser = { id: user.id, email: user.email, name: user.full_name, isNew: false };
-
-      // Set assigned companies
-      const assigned = (user.assigned_companies || []).map(n => ({ name: n, gstin: '', city: '' }));
-      window.registeredCompanies = assigned;
-
-      // Save session
-      try { localStorage.setItem('arthadesk_active_user', JSON.stringify(window.currentUser)); } catch(_) {}
-      try { localStorage.setItem('arthadesk_companies', JSON.stringify(window.registeredCompanies)); } catch(_) {}
-
-      // Pull ALL data from Supabase into localStorage
-      const hadData = await rehydrateAndReload(user.id);
-
-      // Start realtime sync
-      startRealtime(user.id);
-
-      // Navigate
-      if (window.registeredCompanies.length > 0) {
-        try { showCompanyList(); } catch(_) {}
-      } else {
-        toast('⚠️ No companies assigned. Contact admin.', 'danger');
-      }
-
-      toast(`✅ Welcome, ${user.full_name}!${hadData ? ' Data synced.' : ''}`, 'success');
-
-    } catch(err) {
-      if (btn) { btn.textContent = btn._orig || 'Sign In'; btn.disabled = false; }
-      setErr('loginError', '❌ ' + err.message);
-    }
-  };
-
-  /* ─────────────────────────────────────────────
-     doLogout
-  ───────────────────────────────────────────── */
-  window.doLogout = function() {
-    stopRealtime();
-    _uid = null;
-    window._approvedUserId = null;
-    window.currentUser = null;
-    window.registeredCompanies = [];
-    // Clear only session keys, not all localStorage
-    ['arthadesk_active_user', 'arthadesk_companies'].forEach(k => {
-      try { localStorage.removeItem(k); } catch(_) {}
-    });
-    if (typeof showLogin === 'function') showLogin();
-    toast('Signed out.', 'success');
-  };
-
-  /* ─────────────────────────────────────────────
-     doForgotPwd
-  ───────────────────────────────────────────── */
-  window.doForgotPwd = function() {
-    toast('Contact your admin to reset your password.', 'success');
-    const el = document.getElementById('forgotSuccess');
-    if (el) el.classList.add('show');
-    setTimeout(() => { if (typeof showLogin === 'function') showLogin(); }, 2500);
-  };
-
-  /* ─────────────────────────────────────────────
-     SESSION RESTORE ON PAGE LOAD
-  ───────────────────────────────────────────── */
-  window.addEventListener('load', async function() {
-    setTimeout(async () => {
-      try {
-        const saved = JSON.parse(localStorage.getItem('arthadesk_active_user') || 'null');
-        if (!saved?.email) return;
-
-        // Re-verify user is still active
-        const { data: rows } = await sb
-          .from('approved_users').select('*')
-          .eq('email', saved.email).eq('is_active', true).limit(1);
-
-        if (!rows?.length) {
-          localStorage.removeItem('arthadesk_active_user');
-          toast('⚠️ Access revoked. Contact admin.', 'danger');
-          return;
-        }
-
-        const user = rows[0];
-        _uid = user.id;
-        window._approvedUserId = user.id;
-        window.currentUser = { id: user.id, email: user.email, name: user.full_name, isNew: false };
-
-        const assigned = (user.assigned_companies || []).map(n => ({ name: n, gstin: '', city: '' }));
-        window.registeredCompanies = assigned;
-
-        // Pull fresh data from Supabase
-        await rehydrateAndReload(user.id);
-
-        // Start realtime
-        startRealtime(user.id);
-
-        // Show company list
-        if (window.registeredCompanies.length > 0) {
-          try { showCompanyList(); } catch(_) {}
-        }
-      } catch(e) {
-        console.error('[SessionRestore]', e.message);
-      }
-    }, 80);
-  });
-
-  console.log('[ArthaDesk] Sync Layer v5.0 loaded ✅');
-})();
-
-</script>
 
 <!-- ── PWA INSTALL BANNER ── -->
 <style>@keyframes slideUp{from{transform:translateY(80px);opacity:0}to{transform:translateY(0);opacity:1}}</style>
@@ -13459,12 +13149,12 @@ var _aaiApiKey = '';
 
 function _aaiGetKey() {
   if (_aaiApiKey) return _aaiApiKey;
-  // Try sessionStorage first, then localStorage (persistent across reloads)
-  try { _aaiApiKey = sessionStorage.getItem('arthaai_key') || ''; } catch(e){}
+  // Try localStorage cache (Supabase syncs this key across devices)
+  try { _aaiApiKey = localStorage.getItem('arthaai_key') || ''; } catch(e){}
   if (!_aaiApiKey) {
     try { _aaiApiKey = localStorage.getItem('arthaai_key_persist') || ''; } catch(e){}
-    // Restore into sessionStorage so subsequent calls are fast
-    if (_aaiApiKey) { try { sessionStorage.setItem('arthaai_key', _aaiApiKey); } catch(e){} }
+    // Cache in memory for fast subsequent calls
+    if (_aaiApiKey) { try { localStorage.setItem('arthaai_key', _aaiApiKey); } catch(e){} }
   }
   return _aaiApiKey;
 }
@@ -13477,7 +13167,7 @@ function aaiSaveKey() {
     return;
   }
   _aaiApiKey = k;
-  try { sessionStorage.setItem('arthaai_key', k); } catch(e){}
+  try { localStorage.setItem('arthaai_key', k); } catch(e){}
   // Also persist to localStorage so key survives file reloads
   try { localStorage.setItem('arthaai_key_persist', k); } catch(e){}
   document.getElementById('aai-key-input').value = k.slice(0,12) + '••••••••••••••••••••' + k.slice(-4);
@@ -13494,7 +13184,7 @@ function aaiSaveKey() {
 function aaiClearKey() {
   _aaiApiKey = '';
   try { localStorage.removeItem('arthaai_key_persist'); } catch(e){}
-  try { sessionStorage.removeItem('arthaai_key'); } catch(e){}
+  try { localStorage.removeItem('arthaai_key'); } catch(e){}
   document.getElementById('aai-key-input').value = '';
   aaiKeyStatus('Key cleared. Enter a new key to use ArthaAI.', 'rgba(255,255,255,.4)');
   var setup = document.getElementById('aai-key-setup');
@@ -14543,7 +14233,7 @@ function _gstInlineKeySubmit(prefix, gstin) {
   }
   // Save persistently
   window._aaiApiKey = k;
-  try { sessionStorage.setItem('arthaai_key', k); }      catch(e) {}
+  try { localStorage.setItem('arthaai_key', k); }      catch(e) {}
   try { localStorage.setItem('arthaai_key_persist', k); } catch(e) {}
   // Sync into ArthaAI panel fields if visible
   var aaiInput = document.getElementById('aai-key-input');
