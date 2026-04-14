@@ -584,6 +584,7 @@ select.form-control option{background:var(--surface)}
   let _writing = false;     // prevent realtime→write loop
   let _ready = false;       // Supabase ready?
   let _pendingWrites = [];  // writes queued before login
+  let _sessionHandled = false; // true once login/restore completes
 
   // ── Init Supabase (config injected before this script) ─────
   function _initSB() {
@@ -853,57 +854,75 @@ select.form-control option{background:var(--surface)}
       if (btn) { btn._orig = btn.textContent; btn.textContent = '⏳ Verifying…'; btn.disabled = true; }
 
       try {
-        // 1. Check approved_users
         const { data: rows, error } = await _sb
           .from('approved_users').select('*').eq('email', email).limit(1);
 
         if (btn) { btn.textContent = btn._orig || 'Sign In'; btn.disabled = false; }
 
-        if (error)        { _setErr('loginError', '❌ Server error. Try again.'); return; }
-        if (!rows?.length){ _setErr('loginError', '❌ Account not found. Contact admin.'); return; }
+        if (error)         { _setErr('loginError', '❌ Server error. Try again.'); return; }
+        if (!rows?.length) { _setErr('loginError', '❌ Account not found. Contact admin.'); return; }
 
         const user = rows[0];
-        if (!user.is_active){ _setErr('loginError', '🚫 Account blocked. Contact admin.'); return; }
-        if (user.password !== pwd){ _setErr('loginError', '❌ Incorrect password.'); return; }
+        if (!user.is_active) { _setErr('loginError', '🚫 Account blocked. Contact admin.'); return; }
+        if (user.password !== pwd) { _setErr('loginError', '❌ Incorrect password.'); return; }
 
-        // ✅ Login success
+        // ── Login success ────────────────────────────────────────
         _uid = user.id;
+        _sessionHandled = true;
         window._approvedUserId = user.id;
+        window._adAppActive    = false; // at company list stage
         window.currentUser = { id: user.id, email: user.email, name: user.full_name, isNew: false };
 
-        // Set companies from admin assignment
+        // Companies from admin assignment
         const assigned = (user.assigned_companies || []).map(n => ({ name: n, gstin: '', city: '' }));
         window.registeredCompanies = assigned;
 
-        // Save session to real localStorage (bypass proxy to avoid Supabase loop)
+        // Save session to real localStorage (bypass proxy)
         _writing = true;
         _realLS.setItem('arthadesk_active_user', JSON.stringify(window.currentUser));
-        _realLS.setItem('arthadesk_companies', JSON.stringify(window.registeredCompanies));
+        _realLS.setItem('arthadesk_companies',   JSON.stringify(window.registeredCompanies));
         _writing = false;
 
-        // 2. Pull ALL data from Supabase → localStorage
-        const hadData = await _pullFromSupabase(user.id);
-
-        // If this device has local data and Supabase is empty, push to Supabase
-        if (!hadData) {
-          await _pushToSupabase(user.id);
-        }
-
-        // 3. Start realtime
+        // Start realtime immediately
         _startRealtime(user.id);
         _addSyncDot();
 
-        // 4. Update company list in case Supabase has newer data
-        const latestCompanies = window.blLoad('arthadesk_companies', assigned);
-        window.registeredCompanies = Array.isArray(latestCompanies) ? latestCompanies : assigned;
-
-        // 5. Navigate
+        // ── Show company list FIRST (before any async work) ──────
         if (window.registeredCompanies.length > 0) {
           try { showCompanyList(); } catch(_) {}
         } else {
           if (typeof showToast === 'function')
             showToast('⚠️ No companies assigned. Contact admin.', 'danger');
         }
+
+        // ── Pull data from Supabase in background ────────────────
+        // IMPORTANT: Do NOT navigate or call showCompanyList after this
+        // The user may have already selected a company by the time pull finishes
+        _pullFromSupabase(user.id).then(hadData => {
+          if (!hadData) _pushToSupabase(user.id);
+          // Update company list from Supabase (may have more companies)
+          const latest = window.blLoad('arthadesk_companies', assigned);
+          if (Array.isArray(latest) && latest.length > 0) {
+            window.registeredCompanies = latest;
+          }
+          // If user is still at company list (not yet selected), refresh it
+          if (!window._adAppActive) {
+            try { renderCompanyCards(); } catch(_) {}
+          }
+          // If user already entered the app, reload their company data silently
+          if (window._adAppActive && window._activeCompanyKey) {
+            try {
+              const cName = (window.registeredCompanies || []).find(c =>
+                typeof companyKey === 'function' && companyKey(c.name) === window._activeCompanyKey
+              );
+              if (cName) {
+                loadCompanyState(cName.name);
+                if (typeof renderDashboard   === 'function') renderDashboard();
+                if (typeof renderAllMasters  === 'function') renderAllMasters();
+              }
+            } catch(_) {}
+          }
+        }).catch(e => console.error('[bg pull]', e.message));
 
       } catch(err) {
         if (btn) { btn.textContent = btn._orig || 'Sign In'; btn.disabled = false; }
@@ -919,7 +938,7 @@ select.form-control option{background:var(--surface)}
     el.classList.add('show');
   }
 
-  // ── OVERRIDE doLogout ────────────────────────────────────────
+  
   window.doLogout = function() {
     if (_rtChannel && _sb) { _sb.removeChannel(_rtChannel); _rtChannel = null; }
     _uid = null;
@@ -927,6 +946,7 @@ select.form-control option{background:var(--surface)}
     window.currentUser = null;
     window.registeredCompanies = [];
     // Clear ALL localStorage on logout — Supabase is source of truth
+    window._adAppActive = false;
     _writing = true;
     _realLS.clear();
     _writing = false;
@@ -950,6 +970,9 @@ select.form-control option{background:var(--surface)}
     _addSyncDot();
 
     // Read saved session from real localStorage
+    // Skip if user already logged in manually (prevents race condition)
+    if (_sessionHandled || window._sbSessionHandled || window._activeCompanyKey) return;
+
     let savedUser = null;
     try { savedUser = JSON.parse(_realLS.getItem('arthadesk_active_user')); } catch(_) {}
     if (!savedUser?.email) return;
@@ -987,12 +1010,42 @@ select.form-control option{background:var(--surface)}
       // Start realtime
       _startRealtime(user.id);
 
-      // Navigate
+      // Navigate — only if user hasn't already entered the app
       const companies = window.blLoad('arthadesk_companies', assigned);
       window.registeredCompanies = Array.isArray(companies) ? companies : assigned;
 
-      if (window.registeredCompanies.length > 0) {
+      _sessionHandled = true;
+      // Only navigate if user hasn't already opened a company
+      if (!window._activeCompanyKey && !window._sbSessionHandled &&
+          window.registeredCompanies.length > 0) {
+        // Show company list FIRST — before any async Supabase pull
         try { showCompanyList(); } catch(_) {}
+
+        // Pull fresh data in background — do NOT navigate after pull
+        _pullFromSupabase(_uid).then(hadData => {
+          if (!hadData) _pushToSupabase(_uid);
+          const latest = window.blLoad('arthadesk_companies', []);
+          if (Array.isArray(latest) && latest.length > 0)
+            window.registeredCompanies = latest;
+          // Refresh only if still at company list
+          if (!window._adAppActive) {
+            try { renderCompanyCards(); } catch(_) {}
+          }
+          // If already in app, silently reload company data
+          if (window._adAppActive && window._activeCompanyKey) {
+            try {
+              const cName = (window.registeredCompanies || []).find(c =>
+                typeof companyKey === 'function' &&
+                companyKey(c.name) === window._activeCompanyKey
+              );
+              if (cName) {
+                loadCompanyState(cName.name);
+                if (typeof renderDashboard  === 'function') renderDashboard();
+                if (typeof renderAllMasters === 'function') renderAllMasters();
+              }
+            } catch(_) {}
+          }
+        }).catch(e => console.error('[bg restore]', e));
       }
     } catch(e) {
       console.error('[SessionRestore]', e.message);
@@ -8149,6 +8202,10 @@ function checkStrength(pwd) {
 
 // ================== SELECT COMPANY ==================
 function selectCompany(name, gstin, city) {
+  // Mark app as active — prevents session restore from redirecting
+  window._adAppActive = true;
+  window._sbSessionHandled = true;
+  if (typeof _sessionHandled !== 'undefined') _sessionHandled = true;
   // Store active company GSTIN for intra/inter detection
   window._activeCompanyGstin = gstin || '';
   _activeCompanyKey = companyKey(name);
@@ -11886,11 +11943,8 @@ function adeInit() {
 
   // 1. Open / upgrade IDB to v3
   adeOpenDb(function(db) {
-    if (db) {
-      console.log('[ADE] IDB v3 ready with stores:', Array.from(db.objectStoreNames));
-    } else {
-      console.warn('[ADE] IDB unavailable — using localStorage mirror');
-    }
+    // IndexedDB removed — Supabase handles all persistence via localStorage proxy
+    console.log('[ADE] Storage: Supabase cloud (via localStorage proxy) ✅');
   });
 
   // 2. Install all function hooks (wrap existing functions)
