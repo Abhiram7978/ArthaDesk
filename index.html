@@ -3332,11 +3332,18 @@ select.form-control option{background:var(--surface)}
 // ── GLOBAL ERROR HANDLER — prevents blank screen on crash ──────
 window.onerror = function(msg, src, line, col, err) {
   console.error('ArthaDesk Error:', msg, 'Line:', line, err);
-  // If login screen is hidden and app is also hidden = crash before anything rendered
+  // If user is already inside the app, DO NOT redirect to login
+  // window._adAppActive is set to true when a company is selected
+  if (window._adAppActive) return false;
+  // If user is not logged in at all, show login only on hard crash
   var loginEl = document.getElementById('loginScreen');
-  var appEl   = document.getElementById('app');
-  var nothingVisible = loginEl && loginEl.classList.contains('hidden') && appEl;
-  if (nothingVisible || (loginEl && !loginEl.classList.contains('hidden'))) {
+  if (loginEl && !loginEl.classList.contains('hidden')) {
+    // Login screen is already showing — nothing to do
+    return false;
+  }
+  // If no auth screen is visible and user is not in app — show login
+  var anyAuthVisible = document.querySelector('.auth-screen:not(.hidden)');
+  if (!anyAuthVisible && !window._adAppActive) {
     try { showLogin(); } catch(e) {
       document.body.innerHTML = '<div style="font-family:sans-serif;padding:32px;background:#0d1117;color:#fff;min-height:100vh">' +
         '<h2 style="color:#ff4d6d">ArthaDesk</h2>' +
