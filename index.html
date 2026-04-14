@@ -8278,38 +8278,66 @@ function resetAppState() {
 
 // ================== COMPANY CARDS ==================
 function renderCompanyCards() {
-  // Always reload from storage in case other tabs updated it
   loadCompanyList();
   var container = document.getElementById('companyCards');
   var emptyState = document.getElementById('noCompaniesState');
   if (!container) return;
   container.innerHTML = '';
-  if (registeredCompanies.length === 0) {
+  if (!registeredCompanies || registeredCompanies.length === 0) {
     if (emptyState) emptyState.style.display = 'block';
     return;
   }
   if (emptyState) emptyState.style.display = 'none';
-  registeredCompanies.forEach(function(c) {
-    var initials = c.name.split(' ').map(function(w){return w[0];}).join('').substring(0,2).toUpperCase();
-    var colors = ['linear-gradient(135deg,var(--accent),var(--accent2))','linear-gradient(135deg,var(--accent3),var(--gold))','linear-gradient(135deg,var(--accent2),#a855f7)'];
-    var colorIdx = registeredCompanies.indexOf(c) % colors.length;
-    var safeName = c.name.replace(/'/g, "\\'");
-    var safeGstin = (c.gstin||'').replace(/'/g, "\\'");
-    var safeCity = (c.city||'').replace(/'/g, "\\'");
+
+  var colors = [
+    'linear-gradient(135deg,var(--accent),var(--accent2))',
+    'linear-gradient(135deg,var(--accent3),var(--gold))',
+    'linear-gradient(135deg,var(--accent2),#a855f7)'
+  ];
+
+  registeredCompanies.forEach(function(c, idx) {
+    var initials = c.name.split(' ')
+      .map(function(w){ return w[0]||''; })
+      .join('').substring(0,2).toUpperCase() || '??';
+    var col = colors[idx % colors.length];
+
+    // Build card element - onclick on ENTIRE card
     var card = document.createElement('div');
     card.className = 'company-card-item';
-    card.style.cssText = 'display:flex;align-items:center;gap:12px;padding:14px 16px;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface2);margin-bottom:10px;cursor:pointer;transition:border-color .2s;position:relative';
+    card.setAttribute('style', [
+      'display:flex','align-items:center','gap:12px',
+      'padding:14px 16px','border-radius:var(--radius)',
+      'border:1px solid var(--border)','background:var(--surface2)',
+      'margin-bottom:10px','cursor:pointer',
+      'transition:border-color .2s',
+      'user-select:none','-webkit-tap-highlight-color:transparent'
+    ].join(';'));
+
+    // children have pointer-events:none so all clicks bubble to card
     card.innerHTML =
-      '<div class="company-card-icon" style="background:' + colors[colorIdx] + ';flex-shrink:0">' + initials + '</div>' +
-      '<div style="flex:1;min-width:0" onclick="selectCompany(\'' + safeName + '\',\'' + safeGstin + '\',\'' + safeCity + '\')">' +
-        '<div class="company-card-name">' + c.name + '</div>' +
-        '<div class="company-card-meta">GSTIN: ' + (c.gstin||'Unregistered') + ' &nbsp;·&nbsp; ' + (c.city||'—') + '</div>' +
+      '<div class="company-card-icon" style="background:' + col + ';flex-shrink:0;pointer-events:none">' +
+        initials +
       '</div>' +
-      '<button onclick="confirmDeleteCompany(\'' + safeName + '\')" title="Delete company" ' +
-        'style="background:rgba(255,77,109,.12);border:1px solid rgba(255,77,109,.3);color:#ff4d6d;border-radius:6px;padding:6px 10px;font-size:13px;cursor:pointer;flex-shrink:0;transition:background .2s" ' +
-        'onmouseover="this.style.background=\'rgba(255,77,109,.25)\'" onmouseout="this.style.background=\'rgba(255,77,109,.12)\'">' +
-        '🗑 Delete' +
-      '</button>';
+      '<div style="flex:1;min-width:0;pointer-events:none">' +
+        '<div class="company-card-name">' + c.name + '</div>' +
+        '<div class="company-card-meta">GSTIN: ' + (c.gstin || 'Unregistered') +
+          ' &nbsp;&middot;&nbsp; ' + (c.city || '&mdash;') +
+        '</div>' +
+      '</div>' +
+      '<span style="color:var(--text3);font-size:20px;pointer-events:none">&#8250;</span>';
+
+    // Capture company data in closure
+    (function(name, gstin, city) {
+      card.addEventListener('click', function() {
+        selectCompany(name, gstin, city);
+      });
+      // Touch fallback for mobile
+      card.addEventListener('touchend', function(e) {
+        e.preventDefault();
+        selectCompany(name, gstin, city);
+      }, {passive:false});
+    })(c.name, c.gstin||'', c.city||'');
+
     container.appendChild(card);
   });
 }
