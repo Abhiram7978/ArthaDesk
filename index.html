@@ -7865,6 +7865,72 @@ function blRemove(key) {
 // ── FILE SYSTEM ACCESS API — REMOVED (Supabase handles sync) ──
 // All FSA functions are no-ops; data lives in Supabase cloud
 
+// ── COMPANY KEY ───────────────────────────────────────────────
+// Converts company name to a storage key
+// ── FORMAT DATE HELPER ────────────────────────────────────────
+function formatDate(d) {
+  if (!d) return '';
+  var dt = new Date(d);
+  if (isNaN(dt)) return d;
+  return dt.toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' });
+}
+
+function companyKey(companyName) {
+  return BL_PREFIX + 'company_' + companyName.trim().toLowerCase().replace(/[^a-z0-9]/g, '_');
+}
+
+// ── AUTO SAVE ─────────────────────────────────────────────────
+// Saves current company state to localStorage (proxy → Supabase)
+function autoSave() {
+  if (!_activeCompanyKey) return;
+  var state = {
+    invoiceNo  : invoiceNo,
+    purchaseNo : purchaseNo,
+    receiptNo  : receiptNo,
+    paymentNo  : paymentNo,
+    journalNo  : journalNo,
+    invoices   : invoices,
+    purchases  : purchases,
+    receipts   : receipts,
+    payments   : payments,
+    txnLog     : txnLog,
+    masterLedgers : masterLedgers,
+    masterParties : masterParties,
+    masterStock   : masterStock,
+    gstrData      : gstrData,
+    dashData      : dashData,
+    selectedFY    : selectedFY,
+    companyInfo   : readCompanyInfo ? readCompanyInfo() : null
+  };
+  blSave(_activeCompanyKey, state);
+}
+
+// ── READ COMPANY INFO FROM FORM ────────────────────────────────
+function readCompanyInfo() {
+  function gv(id) { var el = document.getElementById(id); return el ? el.value : ''; }
+  return {
+    name      : gv('company-name'),
+    gstin     : gv('company-gstin'),
+    pan       : gv('company-pan'),
+    phone     : gv('company-phone'),
+    email     : gv('company-email'),
+    bankName  : gv('company-bank'),
+    accountNo : gv('company-acc'),
+    ifsc      : gv('company-ifsc'),
+    address   : gv('company-addr')
+  };
+}
+
+// ── DELETE COMPANY ─────────────────────────────────────────────
+function deleteCompany(companyName) {
+  blRemove(companyKey(companyName));
+  registeredCompanies = registeredCompanies.filter(function(c) {
+    return c.name !== companyName;
+  });
+  saveCompanyList();
+}
+
+
 // ── LOAD COMPANY STATE ────────────────────────────────────────
 function loadCompanyState(companyName) {
   _activeCompanyKey = companyKey(companyName);
