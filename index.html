@@ -829,8 +829,14 @@ select.form-control option{background:var(--surface)}
 
   // ── OVERRIDE doLogin ────────────────────────────────────────
   // Wait for DOM, then override
+  // Expose login function as soon as Supabase is ready
+  // Called both immediately and on window.load
   function _attachLogin() {
-    window.doLogin = async function() {
+    window.doLogin = _doLoginAsync;
+    window._supabaseLoginReady = _doLoginAsync;
+  }
+
+  async function _doLoginAsync() {
       const emailEl = document.getElementById('loginEmail');
       const pwdEl   = document.getElementById('loginPassword');
       const email   = (emailEl?.value || '').trim().toLowerCase();
@@ -7759,7 +7765,7 @@ window.addEventListener('load', function() {
     try { addItemRow(); addItemRow(); } catch(e) {}
   } catch(e) {
     console.error('ArthaDesk startup error:', e);
-    try { showLogin(); } catch(_) {}
+    // Do NOT call showLogin() here - Supabase layer handles auth
   }
 });
 
@@ -8179,39 +8185,19 @@ function createCmpBack() {
 }
 function showForgotPwd() { showScreen('forgotScreen'); }
 
-// ================== LOGIN ==================
+// ================== LOGIN — handled by Supabase Layer v6 ==================
 function doLogin() {
-  var email = document.getElementById('loginEmail').value.trim();
-  var pwd   = document.getElementById('loginPassword').value;
-  var errEl = document.getElementById('loginError');
-  errEl.classList.remove('show');
-  if (!email || !pwd) { errEl.textContent = '❌ Please enter email and password.'; errEl.classList.add('show'); return; }
-
-  // Load users from storage
-  loadUserList();
-  var user = registeredUsers.find(function(u){ return u.email === email; });
-  if (!user) {
-    // Allow demo login for any email with 4+ char password (for users who haven't registered)
-    if (pwd.length >= 4) {
-      currentUser = { email: email, name: email.split('@')[0], isNew: false };
-    } else {
-      errEl.textContent = '❌ Email not found. Please register first.';
-      errEl.classList.add('show'); return;
-    }
+  // This sync version is overridden by the async Supabase version in layer v6.
+  // If called before override is ready, wait briefly and retry.
+  if (typeof window._supabaseLoginReady === 'function') {
+    window._supabaseLoginReady();
   } else {
-    // Simple password check (in real app, use hashing)
-    if (user.pwd !== pwd) {
-      errEl.textContent = '❌ Incorrect password. Please try again.';
-      errEl.classList.add('show'); return;
-    }
-    currentUser = { email: user.email, name: user.name, isNew: false };
+    var errEl = document.getElementById('loginError');
+    if (errEl) { errEl.textContent = '⏳ Connecting... please try again.'; errEl.classList.add('show'); }
+    setTimeout(function() {
+      if (typeof window._supabaseLoginReady === 'function') window._supabaseLoginReady();
+    }, 500);
   }
-
-  // Save active session
-  blSave(ACTIVE_USER_KEY, currentUser);
-  // Load companies for this user
-  loadCompanyList();
-  showCompanyList();
 }
 
 // ================== REGISTER ==================
@@ -8275,8 +8261,11 @@ function checkStrength(pwd) {
 
 // ================== SELECT COMPANY ==================
 function selectCompany(name, gstin, city) {
-  // Mark app as active — prevents session restore from redirecting
+  console.log('[ArthaDesk] selectCompany called:', name);
+  // Mark app as active immediately
   window._adAppActive = true;
+  window._sbSessionHandled = true;
+  if (typeof _sessionHandled !== 'undefined') _sessionHandled = true;
   window._sbSessionHandled = true;
   if (typeof _sessionHandled !== 'undefined') _sessionHandled = true;
   // Store active company GSTIN for intra/inter detection
@@ -8349,6 +8338,7 @@ function renderCompanyCards() {
   var emptyState = document.getElementById('noCompaniesState');
   if (!container) return;
   container.innerHTML = '';
+
   if (!registeredCompanies || registeredCompanies.length === 0) {
     if (emptyState) emptyState.style.display = 'block';
     return;
@@ -8361,48 +8351,28 @@ function renderCompanyCards() {
     'linear-gradient(135deg,var(--accent2),#a855f7)'
   ];
 
-  registeredCompanies.forEach(function(c, idx) {
-    var initials = c.name.split(' ')
-      .map(function(w){ return w[0]||''; })
-      .join('').substring(0,2).toUpperCase() || '??';
-    var col = colors[idx % colors.length];
+  registeredCompanies.forEach(function(comp, i) {
+    var initials = comp.name.split(' ')
+      .map(function(w){ return w[0] || ''; })
+      .join('').substring(0, 2).toUpperCase() || '??';
 
-    // Build card element - onclick on ENTIRE card
     var card = document.createElement('div');
     card.className = 'company-card-item';
-    card.setAttribute('style', [
-      'display:flex','align-items:center','gap:12px',
-      'padding:14px 16px','border-radius:var(--radius)',
-      'border:1px solid var(--border)','background:var(--surface2)',
-      'margin-bottom:10px','cursor:pointer',
-      'transition:border-color .2s',
-      'user-select:none','-webkit-tap-highlight-color:transparent'
-    ].join(';'));
+    card.style.cssText = 'display:flex;align-items:center;gap:14px;padding:16px;border-radius:12px;border:1px solid var(--border);background:var(--surface2);margin-bottom:12px;cursor:pointer;transition:all .2s;-webkit-tap-highlight-color:transparent;user-select:none';
 
-    // children have pointer-events:none so all clicks bubble to card
     card.innerHTML =
-      '<div class="company-card-icon" style="background:' + col + ';flex-shrink:0;pointer-events:none">' +
-        initials +
-      '</div>' +
+      '<div class="company-card-icon" style="background:' + colors[i % 3] + ';flex-shrink:0;pointer-events:none;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:16px;color:#000">' + initials + '</div>' +
       '<div style="flex:1;min-width:0;pointer-events:none">' +
-        '<div class="company-card-name">' + c.name + '</div>' +
-        '<div class="company-card-meta">GSTIN: ' + (c.gstin || 'Unregistered') +
-          ' &nbsp;&middot;&nbsp; ' + (c.city || '&mdash;') +
-        '</div>' +
+        '<div class="company-card-name" style="font-weight:700;font-size:14px;color:var(--text)">' + comp.name + '</div>' +
+        '<div class="company-card-meta" style="font-size:11px;color:var(--text3);margin-top:3px">GSTIN: ' + (comp.gstin || 'Unregistered') + '</div>' +
       '</div>' +
-      '<span style="color:var(--text3);font-size:20px;pointer-events:none">&#8250;</span>';
+      '<div style="color:var(--text3);font-size:22px;pointer-events:none">&#8250;</div>';
 
-    // Capture company data in closure
-    (function(name, gstin, city) {
-      card.addEventListener('click', function() {
-        selectCompany(name, gstin, city);
-      });
-      // Touch fallback for mobile
-      card.addEventListener('touchend', function(e) {
-        e.preventDefault();
-        selectCompany(name, gstin, city);
-      }, {passive:false});
-    })(c.name, c.gstin||'', c.city||'');
+    // Single click handler - works on both desktop and mobile
+    card.onclick = function() {
+      console.log('[ArthaDesk] Company card clicked:', comp.name);
+      selectCompany(comp.name, comp.gstin || '', comp.city || '');
+    };
 
     container.appendChild(card);
   });
