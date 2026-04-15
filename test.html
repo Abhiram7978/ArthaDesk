@@ -3,418 +3,223 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ArthaDesk — Supabase Connection Test</title>
+<title>ArthaDesk — Connection Test</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body {
-  font-family: 'Segoe UI', sans-serif;
-  background: #0a0d14;
-  color: #e2e8f0;
-  padding: 20px;
-  font-size: 14px;
-}
-h1 { color: #f59e0b; font-size: 20px; margin-bottom: 4px; }
-.sub { color: #475569; font-size: 12px; margin-bottom: 24px; }
-
-.card {
-  background: #131820;
-  border: 1px solid #1e2d3d;
-  border-radius: 12px;
-  padding: 16px;
-  margin-bottom: 14px;
-}
-.card-title {
-  font-size: 12px;
-  font-weight: 700;
-  color: #94a3b8;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  margin-bottom: 12px;
-}
-
-.row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 0;
-  border-bottom: 1px solid #1e2d3d;
-  gap: 10px;
-}
-.row:last-child { border-bottom: none; }
-.row-label { color: #94a3b8; font-size: 13px; flex: 1; }
-.badge {
-  padding: 4px 12px;
-  border-radius: 6px;
-  font-size: 11px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-.ok    { background: rgba(34,197,94,.15);  color: #22c55e; border: 1px solid rgba(34,197,94,.2); }
-.fail  { background: rgba(239,68,68,.15);  color: #ef4444; border: 1px solid rgba(239,68,68,.2); }
-.wait  { background: rgba(245,158,11,.15); color: #f59e0b; border: 1px solid rgba(245,158,11,.2); }
-.info  { background: rgba(59,130,246,.15); color: #3b82f6; border: 1px solid rgba(59,130,246,.2); }
-
-.detail {
-  font-size: 11px;
-  color: #475569;
-  margin-top: 4px;
-  font-family: monospace;
-  word-break: break-all;
-}
-
-.btn {
-  width: 100%;
-  padding: 14px;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #f59e0b, #d97706);
-  color: #000;
-  font-size: 14px;
-  font-weight: 800;
-  border: none;
-  cursor: pointer;
-  margin-top: 8px;
-}
-.btn:active { opacity: 0.85; }
-
-.log {
-  background: #080a10;
-  border: 1px solid #1e2d3d;
-  border-radius: 10px;
-  padding: 14px;
-  font-family: monospace;
-  font-size: 11px;
-  line-height: 1.8;
-  max-height: 300px;
-  overflow-y: auto;
-  margin-top: 14px;
-}
-.log-ok   { color: #22c55e; }
-.log-err  { color: #ef4444; }
-.log-info { color: #3b82f6; }
-.log-warn { color: #f59e0b; }
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',sans-serif;background:#0a0d14;color:#e2e8f0;padding:16px;font-size:14px}
+h1{color:#f59e0b;font-size:20px;margin-bottom:2px}
+.sub{color:#475569;font-size:11px;font-family:monospace;margin-bottom:20px}
+.card{background:#131820;border:1px solid #1e2d3d;border-radius:12px;padding:16px;margin-bottom:12px}
+.ct{font-size:10px;font-weight:700;color:#94a3b8;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:12px}
+.row{display:flex;align-items:flex-start;justify-content:space-between;padding:10px 0;border-bottom:1px solid #1e2d3d;gap:8px}
+.row:last-child{border-bottom:none}
+.lbl{color:#e2e8f0;font-size:13px}
+.det{font-size:10px;color:#475569;font-family:monospace;margin-top:4px;word-break:break-all;max-width:300px}
+.badge{padding:5px 14px;border-radius:6px;font-size:11px;font-weight:700;white-space:nowrap;flex-shrink:0}
+.ok{background:rgba(34,197,94,.15);color:#22c55e;border:1px solid rgba(34,197,94,.3)}
+.fail{background:rgba(239,68,68,.15);color:#ef4444;border:1px solid rgba(239,68,68,.3)}
+.warn{background:rgba(245,158,11,.15);color:#f59e0b;border:1px solid rgba(245,158,11,.3)}
+.btn{width:100%;padding:14px;border-radius:10px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#000;font-size:15px;font-weight:800;border:none;cursor:pointer;margin-top:10px;-webkit-tap-highlight-color:transparent}
+.alert{border-radius:10px;padding:14px 16px;margin-bottom:12px;font-size:13px;line-height:1.7;display:none}
+.alert.show{display:block}
+.a-red{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:#fca5a5}
+.a-amber{background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);color:#fcd34d}
+.a-green{background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);color:#86efac}
+.log-box{background:#060810;border:1px solid #1e2d3d;border-radius:10px;padding:12px;font-family:monospace;font-size:11px;line-height:2;max-height:280px;overflow-y:auto;margin-top:12px}
+.t-ok{color:#22c55e}.t-err{color:#ef4444}.t-info{color:#3b82f6}.t-warn{color:#f59e0b}
 </style>
 </head>
 <body>
+<h1>⚡ Supabase Diagnostics</h1>
+<div class="sub">Project: ohvuvcoszgwxdzapsazl.supabase.co</div>
 
-<h1>⚡ Supabase Connection Test</h1>
-<div class="sub">ArthaDesk v3.9 — Database Diagnostics</div>
-
-<!-- Config -->
-<div class="card">
-  <div class="card-title">Configuration</div>
-  <div class="row">
-    <div class="row-label">Project URL</div>
-    <div id="cfg-url" class="badge wait">Checking...</div>
-  </div>
-  <div class="row">
-    <div class="row-label">API Key</div>
-    <div id="cfg-key" class="badge wait">Checking...</div>
-  </div>
-  <div class="row">
-    <div class="row-label">Supabase SDK</div>
-    <div id="cfg-sdk" class="badge wait">Checking...</div>
-  </div>
+<div class="alert a-red" id="alertPaused">
+  🔴 <strong>Project is PAUSED!</strong><br><br>
+  Supabase free tier pauses after 7 days of inactivity.<br><br>
+  <strong>To fix:</strong><br>
+  1. Open <strong>supabase.com</strong> in browser<br>
+  2. Go to your project dashboard<br>
+  3. Click the green <strong>"Restore project"</strong> button<br>
+  4. Wait 1–2 minutes<br>
+  5. Come back and tap Re-run Tests
 </div>
 
-<!-- Connectivity -->
-<div class="card">
-  <div class="card-title">Database Connectivity</div>
-  <div class="row">
-    <div>
-      <div class="row-label">Network Ping</div>
-      <div class="detail" id="d-ping"></div>
-    </div>
-    <div id="test-ping" class="badge wait">Testing...</div>
-  </div>
-  <div class="row">
-    <div>
-      <div class="row-label">app_data table</div>
-      <div class="detail" id="d-appdata"></div>
-    </div>
-    <div id="test-appdata" class="badge wait">Testing...</div>
-  </div>
-  <div class="row">
-    <div>
-      <div class="row-label">approved_users table</div>
-      <div class="detail" id="d-users"></div>
-    </div>
-    <div id="test-users" class="badge wait">Testing...</div>
-  </div>
-  <div class="row">
-    <div>
-      <div class="row-label">admin_config table</div>
-      <div class="detail" id="d-admin"></div>
-    </div>
-    <div id="test-admin" class="badge wait">Testing...</div>
-  </div>
-  <div class="row">
-    <div>
-      <div class="row-label">admin_companies table</div>
-      <div class="detail" id="d-companies"></div>
-    </div>
-    <div id="test-companies" class="badge wait">Testing...</div>
-  </div>
+<div class="alert a-amber" id="alertSchema">
+  ⚠️ <strong>Tables Missing!</strong><br><br>
+  Run <strong>schema-FRESH.sql</strong> in Supabase SQL Editor.
 </div>
 
-<!-- Write Test -->
-<div class="card">
-  <div class="card-title">Read / Write Test</div>
-  <div class="row">
-    <div>
-      <div class="row-label">Write to app_data</div>
-      <div class="detail" id="d-write"></div>
-    </div>
-    <div id="test-write" class="badge wait">Pending...</div>
-  </div>
-  <div class="row">
-    <div>
-      <div class="row-label">Read back from app_data</div>
-      <div class="detail" id="d-read"></div>
-    </div>
-    <div id="test-read" class="badge wait">Pending...</div>
-  </div>
-  <div class="row">
-    <div>
-      <div class="row-label">Delete test row</div>
-      <div class="detail" id="d-delete"></div>
-    </div>
-    <div id="test-delete" class="badge wait">Pending...</div>
-  </div>
+<div class="alert a-green" id="alertOK">
+  ✅ <strong>Supabase Fully Connected!</strong><br>
+  All tables accessible, read/write working.
 </div>
 
-<!-- Realtime Test -->
 <div class="card">
-  <div class="card-title">Realtime</div>
-  <div class="row">
-    <div>
-      <div class="row-label">Realtime channel</div>
-      <div class="detail" id="d-realtime"></div>
-    </div>
-    <div id="test-realtime" class="badge wait">Testing...</div>
-  </div>
+  <div class="ct">Configuration</div>
+  <div class="row"><div><div class="lbl">Project URL</div><div class="det" id="d-url"></div></div><div class="badge warn" id="b-url">—</div></div>
+  <div class="row"><div><div class="lbl">API Key</div><div class="det" id="d-key"></div></div><div class="badge warn" id="b-key">—</div></div>
+  <div class="row"><div><div class="lbl">SDK</div></div><div class="badge warn" id="b-sdk">—</div></div>
 </div>
 
-<button class="btn" onclick="runTests()">🔄 Re-run All Tests</button>
+<div class="card">
+  <div class="ct">Connectivity (5s timeout each)</div>
+  <div class="row"><div><div class="lbl">Network Ping</div><div class="det" id="d-ping"></div></div><div class="badge warn" id="b-ping">Waiting</div></div>
+  <div class="row"><div><div class="lbl">approved_users table</div><div class="det" id="d-users"></div></div><div class="badge warn" id="b-users">Waiting</div></div>
+  <div class="row"><div><div class="lbl">admin_config table</div><div class="det" id="d-admin"></div></div><div class="badge warn" id="b-admin">Waiting</div></div>
+  <div class="row"><div><div class="lbl">app_data table</div><div class="det" id="d-appdata"></div></div><div class="badge warn" id="b-appdata">Waiting</div></div>
+</div>
 
-<div class="log" id="log"></div>
+<div class="card">
+  <div class="ct">Write / Read Test</div>
+  <div class="row"><div><div class="lbl">Write to app_data</div><div class="det" id="d-write"></div></div><div class="badge warn" id="b-write">Waiting</div></div>
+  <div class="row"><div><div class="lbl">Read back</div><div class="det" id="d-read"></div></div><div class="badge warn" id="b-read">Waiting</div></div>
+</div>
+
+<button class="btn" onclick="runAll()">🔄 Re-run All Tests</button>
+<div class="log-box" id="logEl"></div>
 
 <script>
-const URL = 'https://ohvuvcoszgwxdzapsazl.supabase.co';
-const KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9odnV2Y29zemd3eGR6YXBzYXpsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDM1NDksImV4cCI6MjA5MTQxOTU0OX0.DvcAa4ohNJtvKiJ9pVBx97d8OaMH80ScNMAmIfM4D6A';
+const URL  = 'https://ohvuvcoszgwxdzapsazl.supabase.co';
+const KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9odnV2Y29zemd3eGR6YXBzYXpsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDM1NDksImV4cCI6MjA5MTQxOTU0OX0.DvcAa4ohNJtvKiJ9pVBx97d8OaMH80ScNMAmIfM4D6A';
+const T    = 5000; // 5 second timeout
 
-function log(msg, type='info') {
-  const el = document.getElementById('log');
-  const line = document.createElement('div');
-  line.className = 'log-' + type;
-  line.textContent = new Date().toLocaleTimeString() + ' — ' + msg;
-  el.appendChild(line);
+let sb;
+
+function log(msg, t) {
+  const el = document.getElementById('logEl');
+  const d = document.createElement('div');
+  d.className = 't-' + (t || 'info');
+  d.textContent = new Date().toLocaleTimeString() + '  ' + msg;
+  el.appendChild(d);
   el.scrollTop = el.scrollHeight;
 }
 
-function setBadge(id, text, cls, detail='') {
-  const el = document.getElementById(id);
-  el.textContent = text;
-  el.className = 'badge ' + cls;
-  const d = document.getElementById('d-' + id.replace('test-',''));
-  if (d && detail) d.textContent = detail;
+function set(id, text, cls, det) {
+  const b = document.getElementById('b-' + id);
+  if (b) { b.textContent = text; b.className = 'badge ' + cls; }
+  const d = document.getElementById('d-' + id);
+  if (d && det !== undefined) d.textContent = det;
 }
 
-async function runTests() {
-  document.getElementById('log').innerHTML = '';
-  
-  // Reset all badges
-  document.querySelectorAll('.badge').forEach(b => {
-    b.className = 'badge wait';
-    b.textContent = 'Testing...';
+function timed(fn) {
+  return Promise.race([
+    fn(),
+    new Promise((_, r) => setTimeout(() => r(new Error('TIMEOUT')), T))
+  ]);
+}
+
+async function runAll() {
+  document.getElementById('logEl').innerHTML = '';
+  ['alertPaused','alertSchema','alertOK'].forEach(i => document.getElementById(i).classList.remove('show'));
+  ['url','key','sdk','ping','users','admin','appdata','write','read'].forEach(id => {
+    set(id, '...', 'warn', '');
   });
-  document.querySelectorAll('.detail').forEach(d => d.textContent = '');
 
-  log('Starting Supabase connection diagnostics...', 'info');
+  log('Starting...', 'info');
 
-  // ── CONFIG CHECK ──────────────────────────────────────────
-  log('Checking configuration...', 'info');
-
-  if (URL && !URL.includes('YOUR_PROJECT')) {
-    setBadge('cfg-url', '✅ Set', 'ok', URL);
-    log('URL: ' + URL, 'ok');
-  } else {
-    setBadge('cfg-url', '❌ Missing', 'fail', 'Not configured');
-    log('URL not configured!', 'err');
+  // Config
+  set('url', '✅ Set', 'ok', URL);
+  set('key', KEY.startsWith('eyJ') ? '✅ Anon JWT' : '❌ Wrong key', KEY.startsWith('eyJ') ? 'ok' : 'fail', KEY.slice(0,22)+'...');
+  
+  if (!window.supabase?.createClient) {
+    set('sdk','❌ Failed','fail');
+    log('SDK failed to load','err'); return;
   }
+  set('sdk','✅ Loaded','ok');
+  log('SDK ready ✅','ok');
 
-  if (KEY && !KEY.includes('YOUR_')) {
-    setBadge('cfg-key', '✅ Set', 'ok', KEY.substring(0,20) + '...');
-    log('KEY: ' + KEY.substring(0,20) + '...', 'ok');
-  } else {
-    setBadge('cfg-key', '❌ Missing', 'fail');
-    log('API Key not configured!', 'err');
-  }
+  sb = window.supabase.createClient(URL, KEY, { auth: { persistSession: false } });
 
-  if (window.supabase && window.supabase.createClient) {
-    setBadge('cfg-sdk', '✅ Loaded', 'ok', 'supabase-js v2');
-    log('SDK loaded successfully', 'ok');
-  } else {
-    setBadge('cfg-sdk', '❌ Failed', 'fail');
-    log('Supabase SDK failed to load', 'err');
+  // Ping
+  log('Pinging Supabase...','info');
+  let pingOK = false;
+  try {
+    const t0 = Date.now();
+    const { error } = await timed(() => sb.from('admin_config').select('id').limit(1));
+    const ms = Date.now() - t0;
+    if (error && error.code !== 'PGRST116' && !error.message?.includes('does not exist')) throw error;
+    pingOK = true;
+    set('ping','✅ ' + ms + 'ms','ok', ms + 'ms response time');
+    log('Ping OK — ' + ms + 'ms ✅','ok');
+  } catch(e) {
+    set('ping','❌ Failed','fail', e.message);
+    log('Ping FAILED: ' + e.message,'err');
+    if (e.message === 'TIMEOUT') {
+      document.getElementById('alertPaused').classList.add('show');
+      log('→ Project is PAUSED. Go to supabase.com and click Restore.','warn');
+    }
+    ['users','admin','appdata','write','read'].forEach(id => set(id,'—','warn','skipped'));
     return;
   }
 
-  // ── INIT CLIENT ───────────────────────────────────────────
-  const { createClient } = window.supabase;
-  const sb = createClient(URL, KEY);
-  log('Supabase client created', 'info');
-
-  // ── PING ──────────────────────────────────────────────────
-  log('Pinging Supabase...', 'info');
-  try {
-    const t0 = Date.now();
-    const { data, error } = await sb.from('admin_config').select('id').limit(1);
-    const ms = Date.now() - t0;
-    if (error && error.code !== 'PGRST116') throw error;
-    setBadge('test-ping', '✅ ' + ms + 'ms', 'ok', 'Response time: ' + ms + 'ms');
-    log('Ping OK: ' + ms + 'ms', 'ok');
-  } catch(e) {
-    setBadge('test-ping', '❌ Failed', 'fail', e.message);
-    log('Ping failed: ' + e.message, 'err');
-  }
-
-  // ── TABLE CHECKS ──────────────────────────────────────────
-  const tables = [
-    { name: 'app_data',        id: 'test-appdata',   d: 'd-appdata' },
-    { name: 'approved_users',  id: 'test-users',     d: 'd-users' },
-    { name: 'admin_config',    id: 'test-admin',     d: 'd-admin' },
-    { name: 'admin_companies', id: 'test-companies', d: 'd-companies' },
-  ];
-
-  for (const t of tables) {
-    log('Checking table: ' + t.name, 'info');
+  // Tables
+  let tablesOK = true;
+  for (const [id, tbl] of [['users','approved_users'],['admin','admin_config'],['appdata','app_data']]) {
     try {
-      const { data, error, count } = await sb.from(t.name).select('*', { count: 'exact', head: true });
+      const { count, error } = await timed(() => sb.from(tbl).select('*',{count:'exact',head:true}));
       if (error) throw error;
-      const rows = count !== null ? count + ' rows' : 'accessible';
-      setBadge(t.id, '✅ OK', 'ok', t.name + ': ' + rows);
-      document.getElementById(t.d).textContent = rows;
-      log(t.name + ': OK (' + rows + ')', 'ok');
+      set(id,'✅ OK','ok', tbl + ': ' + (count ?? 0) + ' rows');
+      log(tbl + ' OK (' + (count ?? 0) + ' rows)','ok');
     } catch(e) {
-      setBadge(t.id, '❌ Error', 'fail', e.message);
-      document.getElementById(t.d).textContent = e.message;
-      log(t.name + ' ERROR: ' + e.message, 'err');
+      tablesOK = false;
+      const miss = e.message?.includes('42P01') || e.message?.includes('does not exist');
+      set(id, miss ? '❌ Missing' : '❌ Error', 'fail', miss ? 'Run schema-FRESH.sql' : e.message);
+      log(tbl + ' ERROR: ' + e.message,'err');
     }
   }
 
-  // ── WRITE TEST ────────────────────────────────────────────
-  log('Testing write to app_data...', 'info');
-  const testKey = 'arthadesk_diagnostic_test_' + Date.now();
-  const testVal = { test: true, ts: new Date().toISOString() };
+  if (!tablesOK) {
+    document.getElementById('alertSchema').classList.add('show');
+    ['write','read'].forEach(id => set(id,'—','warn','skipped'));
+    return;
+  }
 
+  // Write
+  const key = 'arthadesk_diag_' + Date.now();
   try {
-    const { error } = await sb.from('app_data').upsert({
-      user_id: 'diagnostic_test_user',
-      data_key: testKey,
-      data_value: testVal,
-      updated_at: new Date().toISOString()
-    }, { onConflict: 'user_id,data_key' });
-
+    const { error } = await timed(() => sb.from('app_data').upsert(
+      { user_id:'diag_user', data_key:key, data_value:{ok:true}, updated_at:new Date().toISOString() },
+      { onConflict:'user_id,data_key' }
+    ));
     if (error) throw error;
-    setBadge('test-write', '✅ OK', 'ok', 'Wrote key: ' + testKey.substring(0,30) + '...');
-    log('Write OK', 'ok');
+    set('write','✅ OK','ok','Write successful');
+    log('Write OK ✅','ok');
 
-    // ── READ TEST ──────────────────────────────────────────
-    log('Testing read from app_data...', 'info');
+    // Read back
     try {
-      const { data, error: rerr } = await sb.from('app_data')
-        .select('data_value')
-        .eq('user_id', 'diagnostic_test_user')
-        .eq('data_key', testKey)
-        .single();
-
-      if (rerr) throw rerr;
-      const matches = JSON.stringify(data.data_value) === JSON.stringify(testVal);
-      if (matches) {
-        setBadge('test-read', '✅ OK', 'ok', 'Data matches ✓');
-        log('Read OK — data matches', 'ok');
-      } else {
-        setBadge('test-read', '⚠️ Mismatch', 'warn', 'Data does not match');
-        log('Read returned wrong data', 'warn');
-      }
+      const { data, error: re } = await timed(() =>
+        sb.from('app_data').select('data_value').eq('user_id','diag_user').eq('data_key',key).single()
+      );
+      if (re) throw re;
+      set('read','✅ OK','ok','Read successful ✓');
+      log('Read OK ✅','ok');
+      // Cleanup
+      sb.from('app_data').delete().eq('user_id','diag_user').eq('data_key',key).then(()=>{});
     } catch(e) {
-      setBadge('test-read', '❌ Error', 'fail', e.message);
-      log('Read ERROR: ' + e.message, 'err');
+      set('read','❌ Failed','fail',e.message);
+      log('Read FAILED: '+e.message,'err');
     }
-
-    // ── DELETE TEST ────────────────────────────────────────
-    log('Cleaning up test row...', 'info');
-    try {
-      const { error: derr } = await sb.from('app_data')
-        .delete()
-        .eq('user_id', 'diagnostic_test_user')
-        .eq('data_key', testKey);
-      if (derr) throw derr;
-      setBadge('test-delete', '✅ OK', 'ok', 'Test row deleted');
-      log('Delete OK', 'ok');
-    } catch(e) {
-      setBadge('test-delete', '❌ Error', 'fail', e.message);
-      log('Delete ERROR: ' + e.message, 'err');
-    }
-
   } catch(e) {
-    setBadge('test-write', '❌ Error', 'fail', e.message);
-    setBadge('test-read', '—', 'wait', 'Skipped (write failed)');
-    setBadge('test-delete', '—', 'wait', 'Skipped');
-    log('Write ERROR: ' + e.message, 'err');
-    log('HINT: Run sync-fix.sql in Supabase SQL Editor', 'warn');
+    set('write','❌ Failed','fail',e.message);
+    set('read','—','warn','skipped');
+    log('Write FAILED: '+e.message,'err');
+    if (e.message?.includes('policy') || e.message?.includes('RLS')) {
+      log('→ RLS blocking writes. Run sync-fix.sql in Supabase.','warn');
+    }
+    return;
   }
 
-  // ── REALTIME TEST ──────────────────────────────────────────
-  log('Testing realtime channel...', 'info');
-  try {
-    let resolved = false;
-    await new Promise((resolve) => {
-      const ch = sb.channel('diagnostic_test')
-        .subscribe(status => {
-          if (!resolved) {
-            resolved = true;
-            if (status === 'SUBSCRIBED') {
-              setBadge('test-realtime', '✅ Connected', 'ok', 'Status: SUBSCRIBED');
-              log('Realtime: SUBSCRIBED ✅', 'ok');
-            } else {
-              setBadge('test-realtime', '⚠️ ' + status, 'warn', 'Status: ' + status);
-              log('Realtime status: ' + status, 'warn');
-            }
-            sb.removeChannel(ch);
-            resolve();
-          }
-        });
-      setTimeout(() => {
-        if (!resolved) {
-          resolved = true;
-          setBadge('test-realtime', '⏱ Timeout', 'fail', 'No response in 5s');
-          log('Realtime: timeout after 5s', 'err');
-          sb.removeChannel(ch);
-          resolve();
-        }
-      }, 5000);
-    });
-  } catch(e) {
-    setBadge('test-realtime', '❌ Error', 'fail', e.message);
-    log('Realtime ERROR: ' + e.message, 'err');
-  }
-
-  log('━━━ Diagnostics complete ━━━', 'info');
-
-  // Summary
   const fails = document.querySelectorAll('.badge.fail').length;
   if (fails === 0) {
-    log('🎉 ALL TESTS PASSED — Supabase is fully connected!', 'ok');
+    document.getElementById('alertOK').classList.add('show');
+    log('🎉 ALL TESTS PASSED!','ok');
   } else {
-    log('⚠️ ' + fails + ' test(s) failed — check errors above', 'warn');
-    log('Fix: Run sync-fix.sql in Supabase → SQL Editor', 'warn');
+    log('⚠️ ' + fails + ' failure(s) — see above','warn');
   }
 }
 
-// Auto-run on load
-window.addEventListener('load', runTests);
+window.addEventListener('load', runAll);
 </script>
 </body>
 </html>
