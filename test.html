@@ -2,224 +2,227 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ArthaDesk — Connection Test</title>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ArthaDesk — DB Test</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Segoe UI',sans-serif;background:#0a0d14;color:#e2e8f0;padding:16px;font-size:14px}
-h1{color:#f59e0b;font-size:20px;margin-bottom:2px}
-.sub{color:#475569;font-size:11px;font-family:monospace;margin-bottom:20px}
-.card{background:#131820;border:1px solid #1e2d3d;border-radius:12px;padding:16px;margin-bottom:12px}
-.ct{font-size:10px;font-weight:700;color:#94a3b8;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:12px}
-.row{display:flex;align-items:flex-start;justify-content:space-between;padding:10px 0;border-bottom:1px solid #1e2d3d;gap:8px}
-.row:last-child{border-bottom:none}
-.lbl{color:#e2e8f0;font-size:13px}
-.det{font-size:10px;color:#475569;font-family:monospace;margin-top:4px;word-break:break-all;max-width:300px}
-.badge{padding:5px 14px;border-radius:6px;font-size:11px;font-weight:700;white-space:nowrap;flex-shrink:0}
+body{background:#0a0d14;color:#e2e8f0;font-family:monospace;padding:16px;font-size:13px}
+h2{color:#f59e0b;margin-bottom:4px;font-size:18px}
+.sub{color:#475569;font-size:11px;margin-bottom:16px}
+.row{background:#131820;border:1px solid #1e2d3d;border-radius:8px;padding:12px 14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.label{flex:1}
+.title{font-size:13px;color:#e2e8f0}
+.detail{font-size:10px;color:#475569;margin-top:3px;word-break:break-all}
+.badge{padding:4px 12px;border-radius:5px;font-size:11px;font-weight:700;white-space:nowrap;flex-shrink:0}
+.wait{background:#1e2d3d;color:#475569}
 .ok{background:rgba(34,197,94,.15);color:#22c55e;border:1px solid rgba(34,197,94,.3)}
 .fail{background:rgba(239,68,68,.15);color:#ef4444;border:1px solid rgba(239,68,68,.3)}
 .warn{background:rgba(245,158,11,.15);color:#f59e0b;border:1px solid rgba(245,158,11,.3)}
-.btn{width:100%;padding:14px;border-radius:10px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#000;font-size:15px;font-weight:800;border:none;cursor:pointer;margin-top:10px;-webkit-tap-highlight-color:transparent}
-.alert{border-radius:10px;padding:14px 16px;margin-bottom:12px;font-size:13px;line-height:1.7;display:none}
-.alert.show{display:block}
-.a-red{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:#fca5a5}
-.a-amber{background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);color:#fcd34d}
-.a-green{background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);color:#86efac}
-.log-box{background:#060810;border:1px solid #1e2d3d;border-radius:10px;padding:12px;font-family:monospace;font-size:11px;line-height:2;max-height:280px;overflow-y:auto;margin-top:12px}
-.t-ok{color:#22c55e}.t-err{color:#ef4444}.t-info{color:#3b82f6}.t-warn{color:#f59e0b}
+.box{background:#060810;border:1px solid #1e2d3d;border-radius:8px;padding:12px;font-size:11px;line-height:1.9;max-height:250px;overflow-y:auto;margin:10px 0}
+.g{color:#22c55e}.r{color:#ef4444}.b{color:#3b82f6}.y{color:#f59e0b}
+.alert{border-radius:8px;padding:12px;margin-bottom:10px;font-size:12px;line-height:1.7;display:none}
+.alert.on{display:block}
+.red{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:#fca5a5}
+.grn{background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);color:#86efac}
+.amb{background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);color:#fcd34d}
+btn{display:block;width:100%;padding:13px;border-radius:8px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#000;font-size:14px;font-weight:800;border:none;cursor:pointer;margin:8px 0;font-family:monospace}
 </style>
 </head>
 <body>
-<h1>⚡ Supabase Diagnostics</h1>
-<div class="sub">Project: ohvuvcoszgwxdzapsazl.supabase.co</div>
+<h2>⚡ ArthaDesk DB Test</h2>
+<div class="sub">ohvuvcoszgwxdzapsazl.supabase.co</div>
 
-<div class="alert a-red" id="alertPaused">
-  🔴 <strong>Project is PAUSED!</strong><br><br>
-  Supabase free tier pauses after 7 days of inactivity.<br><br>
-  <strong>To fix:</strong><br>
-  1. Open <strong>supabase.com</strong> in browser<br>
-  2. Go to your project dashboard<br>
-  3. Click the green <strong>"Restore project"</strong> button<br>
-  4. Wait 1–2 minutes<br>
-  5. Come back and tap Re-run Tests
+<div class="alert red" id="aSchema">
+  ❌ <b>Tables missing!</b><br>
+  Go to Supabase → SQL Editor → paste schema-FRESH.sql → Run
+</div>
+<div class="alert red" id="aNetwork">
+  ❌ <b>Network timeout</b><br>
+  Check your internet. If on mobile data, try WiFi.<br>
+  Also verify Supabase project is not paused.
+</div>
+<div class="alert grn" id="aOK">
+  ✅ <b>All good! Supabase connected and working.</b>
+</div>
+<div class="alert amb" id="aRLS">
+  ⚠️ <b>RLS blocking writes</b><br>
+  Run schema-FRESH.sql again in Supabase SQL Editor.
 </div>
 
-<div class="alert a-amber" id="alertSchema">
-  ⚠️ <strong>Tables Missing!</strong><br><br>
-  Run <strong>schema-FRESH.sql</strong> in Supabase SQL Editor.
-</div>
+<div class="row"><div class="label"><div class="title">Project URL</div><div class="detail" id="d0">https://ohvuvcoszgwxdzapsazl.supabase.co</div></div><div class="badge ok">✅ Set</div></div>
+<div class="row"><div class="label"><div class="title">API Key</div><div class="detail" id="d1"></div></div><div class="badge" id="b1">wait</div></div>
+<div class="row"><div class="label"><div class="title">SDK Loaded</div></div><div class="badge" id="b2">wait</div></div>
+<div class="row"><div class="label"><div class="title">1. Direct HTTP ping (no SDK)</div><div class="detail" id="d3"></div></div><div class="badge wait" id="b3">...</div></div>
+<div class="row"><div class="label"><div class="title">2. SDK query (admin_config)</div><div class="detail" id="d4"></div></div><div class="badge wait" id="b4">...</div></div>
+<div class="row"><div class="label"><div class="title">3. approved_users table</div><div class="detail" id="d5"></div></div><div class="badge wait" id="b5">...</div></div>
+<div class="row"><div class="label"><div class="title">4. app_data table</div><div class="detail" id="d6"></div></div><div class="badge wait" id="b6">...</div></div>
+<div class="row"><div class="label"><div class="title">5. Write to app_data</div><div class="detail" id="d7"></div></div><div class="badge wait" id="b7">...</div></div>
+<div class="row"><div class="label"><div class="title">6. Read back</div><div class="detail" id="d8"></div></div><div class="badge wait" id="b8">...</div></div>
 
-<div class="alert a-green" id="alertOK">
-  ✅ <strong>Supabase Fully Connected!</strong><br>
-  All tables accessible, read/write working.
-</div>
+<button onclick="run()" style="display:block;width:100%;padding:13px;border-radius:8px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#000;font-size:14px;font-weight:800;border:none;cursor:pointer;margin:8px 0">🔄 Re-run</button>
 
-<div class="card">
-  <div class="ct">Configuration</div>
-  <div class="row"><div><div class="lbl">Project URL</div><div class="det" id="d-url"></div></div><div class="badge warn" id="b-url">—</div></div>
-  <div class="row"><div><div class="lbl">API Key</div><div class="det" id="d-key"></div></div><div class="badge warn" id="b-key">—</div></div>
-  <div class="row"><div><div class="lbl">SDK</div></div><div class="badge warn" id="b-sdk">—</div></div>
-</div>
+<div class="box" id="log"></div>
 
-<div class="card">
-  <div class="ct">Connectivity (5s timeout each)</div>
-  <div class="row"><div><div class="lbl">Network Ping</div><div class="det" id="d-ping"></div></div><div class="badge warn" id="b-ping">Waiting</div></div>
-  <div class="row"><div><div class="lbl">approved_users table</div><div class="det" id="d-users"></div></div><div class="badge warn" id="b-users">Waiting</div></div>
-  <div class="row"><div><div class="lbl">admin_config table</div><div class="det" id="d-admin"></div></div><div class="badge warn" id="b-admin">Waiting</div></div>
-  <div class="row"><div><div class="lbl">app_data table</div><div class="det" id="d-appdata"></div></div><div class="badge warn" id="b-appdata">Waiting</div></div>
-</div>
-
-<div class="card">
-  <div class="ct">Write / Read Test</div>
-  <div class="row"><div><div class="lbl">Write to app_data</div><div class="det" id="d-write"></div></div><div class="badge warn" id="b-write">Waiting</div></div>
-  <div class="row"><div><div class="lbl">Read back</div><div class="det" id="d-read"></div></div><div class="badge warn" id="b-read">Waiting</div></div>
-</div>
-
-<button class="btn" onclick="runAll()">🔄 Re-run All Tests</button>
-<div class="log-box" id="logEl"></div>
-
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script>
-const URL  = 'https://ohvuvcoszgwxdzapsazl.supabase.co';
-const KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9odnV2Y29zemd3eGR6YXBzYXpsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDM1NDksImV4cCI6MjA5MTQxOTU0OX0.DvcAa4ohNJtvKiJ9pVBx97d8OaMH80ScNMAmIfM4D6A';
-const T    = 5000; // 5 second timeout
+const URL = 'https://ohvuvcoszgwxdzapsazl.supabase.co';
+const KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9odnV2Y29zemd3eGR6YXBzYXpsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDM1NDksImV4cCI6MjA5MTQxOTU0OX0.DvcAa4ohNJtvKiJ9pVBx97d8OaMH80ScNMAmIfM4D6A';
+const TO = 12000; // 12 second timeout
 
-let sb;
-
-function log(msg, t) {
-  const el = document.getElementById('logEl');
-  const d = document.createElement('div');
-  d.className = 't-' + (t || 'info');
-  d.textContent = new Date().toLocaleTimeString() + '  ' + msg;
-  el.appendChild(d);
-  el.scrollTop = el.scrollHeight;
+function L(msg,t){
+  const el=document.getElementById('log');
+  const d=document.createElement('div');
+  d.className=t||'b';
+  d.textContent=new Date().toLocaleTimeString()+' '+msg;
+  el.appendChild(d);el.scrollTop=el.scrollHeight;
+}
+function B(id,text,cls,det){
+  const b=document.getElementById('b'+id);
+  if(b){b.textContent=text;b.className='badge '+cls;}
+  const d=document.getElementById('d'+id);
+  if(d&&det!==undefined)d.textContent=det;
+}
+function T(fn){
+  return Promise.race([fn(),new Promise((_,r)=>setTimeout(()=>r(new Error('TIMEOUT after '+TO/1000+'s')),TO))]);
 }
 
-function set(id, text, cls, det) {
-  const b = document.getElementById('b-' + id);
-  if (b) { b.textContent = text; b.className = 'badge ' + cls; }
-  const d = document.getElementById('d-' + id);
-  if (d && det !== undefined) d.textContent = det;
-}
+async function run(){
+  document.getElementById('log').innerHTML='';
+  ['aSchema','aNetwork','aOK','aRLS'].forEach(id=>{document.getElementById(id).classList.remove('on');});
+  for(let i=1;i<=8;i++){B(i,'...','wait','');}
 
-function timed(fn) {
-  return Promise.race([
-    fn(),
-    new Promise((_, r) => setTimeout(() => r(new Error('TIMEOUT')), T))
-  ]);
-}
+  L('Starting tests...','b');
 
-async function runAll() {
-  document.getElementById('logEl').innerHTML = '';
-  ['alertPaused','alertSchema','alertOK'].forEach(i => document.getElementById(i).classList.remove('show'));
-  ['url','key','sdk','ping','users','admin','appdata','write','read'].forEach(id => {
-    set(id, '...', 'warn', '');
+  // KEY check
+  if(KEY.startsWith('eyJ')){B(1,'✅ Anon JWT','ok',KEY.slice(0,22)+'...');L('Key: Anon JWT ✅','g');}
+  else{B(1,'❌ Wrong key type','fail');L('Key type wrong!','r');}
+
+  // SDK check
+  if(window.supabase&&window.supabase.createClient){B(2,'✅ Loaded','ok');L('SDK loaded ✅','g');}
+  else{B(2,'❌ Failed','fail');L('SDK failed','r');return;}
+
+  // ── TEST 1: Direct HTTP fetch (no SDK) ─────────────────────
+  L('Test 1: Direct HTTP fetch...','b');
+  try{
+    const t0=Date.now();
+    const res=await T(()=>fetch(URL+'/rest/v1/admin_config?select=id&limit=1',{
+      headers:{'apikey':KEY,'Authorization':'Bearer '+KEY}
+    }));
+    const ms=Date.now()-t0;
+    const body=await res.text();
+    L('HTTP '+res.status+' in '+ms+'ms: '+body.slice(0,80),'g');
+    if(res.status===200||res.status===206){
+      B(3,'✅ '+ms+'ms','ok','HTTP '+res.status+' in '+ms+'ms');
+    } else if(res.status===404||body.includes('does not exist')){
+      B(3,'⚠️ Table missing','warn','Run schema-FRESH.sql');
+      L('admin_config table not found → run schema-FRESH.sql','y');
+      document.getElementById('aSchema').classList.add('on');
+    } else {
+      B(3,'⚠️ HTTP '+res.status,'warn',body.slice(0,60));
+    }
+  }catch(e){
+    B(3,'❌ '+e.message.slice(0,30),'fail',e.message);
+    L('HTTP fetch failed: '+e.message,'r');
+    if(e.message.includes('TIMEOUT')){document.getElementById('aNetwork').classList.add('on');}
+    return;
+  }
+
+  // Init SDK client
+  const sb=window.supabase.createClient(URL,KEY,{
+    auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}
   });
 
-  log('Starting...', 'info');
-
-  // Config
-  set('url', '✅ Set', 'ok', URL);
-  set('key', KEY.startsWith('eyJ') ? '✅ Anon JWT' : '❌ Wrong key', KEY.startsWith('eyJ') ? 'ok' : 'fail', KEY.slice(0,22)+'...');
-  
-  if (!window.supabase?.createClient) {
-    set('sdk','❌ Failed','fail');
-    log('SDK failed to load','err'); return;
-  }
-  set('sdk','✅ Loaded','ok');
-  log('SDK ready ✅','ok');
-
-  sb = window.supabase.createClient(URL, KEY, { auth: { persistSession: false } });
-
-  // Ping
-  log('Pinging Supabase...','info');
-  let pingOK = false;
-  try {
-    const t0 = Date.now();
-    const { error } = await timed(() => sb.from('admin_config').select('id').limit(1));
-    const ms = Date.now() - t0;
-    if (error && error.code !== 'PGRST116' && !error.message?.includes('does not exist')) throw error;
-    pingOK = true;
-    set('ping','✅ ' + ms + 'ms','ok', ms + 'ms response time');
-    log('Ping OK — ' + ms + 'ms ✅','ok');
-  } catch(e) {
-    set('ping','❌ Failed','fail', e.message);
-    log('Ping FAILED: ' + e.message,'err');
-    if (e.message === 'TIMEOUT') {
-      document.getElementById('alertPaused').classList.add('show');
-      log('→ Project is PAUSED. Go to supabase.com and click Restore.','warn');
+  // ── TEST 2: SDK query ──────────────────────────────────────
+  L('Test 2: SDK query admin_config...','b');
+  try{
+    const t0=Date.now();
+    const {data,error}=await T(()=>sb.from('admin_config').select('id').limit(1));
+    const ms=Date.now()-t0;
+    if(error){
+      const miss=error.message.includes('does not exist')||error.code==='42P01';
+      B(4,miss?'❌ Missing':'❌ '+error.code,'fail',error.message.slice(0,60));
+      L('admin_config ERROR: '+error.message,'r');
+      if(miss){document.getElementById('aSchema').classList.add('on');}
+    }else{
+      B(4,'✅ '+ms+'ms','ok',ms+'ms, rows: '+(data?data.length:0));
+      L('admin_config OK ✅ '+ms+'ms','g');
     }
-    ['users','admin','appdata','write','read'].forEach(id => set(id,'—','warn','skipped'));
-    return;
+  }catch(e){
+    B(4,'❌ '+e.message.slice(0,30),'fail',e.message);
+    L('SDK failed: '+e.message,'r');
   }
 
-  // Tables
-  let tablesOK = true;
-  for (const [id, tbl] of [['users','approved_users'],['admin','admin_config'],['appdata','app_data']]) {
-    try {
-      const { count, error } = await timed(() => sb.from(tbl).select('*',{count:'exact',head:true}));
-      if (error) throw error;
-      set(id,'✅ OK','ok', tbl + ': ' + (count ?? 0) + ' rows');
-      log(tbl + ' OK (' + (count ?? 0) + ' rows)','ok');
-    } catch(e) {
-      tablesOK = false;
-      const miss = e.message?.includes('42P01') || e.message?.includes('does not exist');
-      set(id, miss ? '❌ Missing' : '❌ Error', 'fail', miss ? 'Run schema-FRESH.sql' : e.message);
-      log(tbl + ' ERROR: ' + e.message,'err');
+  // ── TEST 3: approved_users ────────────────────────────────
+  L('Test 3: approved_users...','b');
+  try{
+    const {count,error}=await T(()=>sb.from('approved_users').select('*',{count:'exact',head:true}));
+    if(error){
+      const miss=error.message.includes('does not exist')||error.code==='42P01';
+      B(5,miss?'❌ Missing':'❌ Error','fail',miss?'Run schema-FRESH.sql':error.message.slice(0,50));
+      L('approved_users ERROR: '+error.message,'r');
+      if(miss)document.getElementById('aSchema').classList.add('on');
+    }else{
+      B(5,'✅ '+count+' rows','ok',count+' users');
+      L('approved_users OK ✅ '+count+' rows','g');
     }
-  }
+  }catch(e){B(5,'❌ Timeout','fail',e.message);L('approved_users timeout','r');}
 
-  if (!tablesOK) {
-    document.getElementById('alertSchema').classList.add('show');
-    ['write','read'].forEach(id => set(id,'—','warn','skipped'));
-    return;
-  }
+  // ── TEST 4: app_data ──────────────────────────────────────
+  L('Test 4: app_data...','b');
+  try{
+    const {count,error}=await T(()=>sb.from('app_data').select('*',{count:'exact',head:true}));
+    if(error){
+      const miss=error.message.includes('does not exist')||error.code==='42P01';
+      B(6,miss?'❌ Missing':'❌ Error','fail',miss?'Run schema-FRESH.sql':error.message.slice(0,50));
+      L('app_data ERROR: '+error.message,'r');
+      if(miss)document.getElementById('aSchema').classList.add('on');
+    }else{
+      B(6,'✅ '+count+' rows','ok',count+' rows');
+      L('app_data OK ✅ '+count+' rows','g');
+    }
+  }catch(e){B(6,'❌ Timeout','fail',e.message);L('app_data timeout','r');}
 
-  // Write
-  const key = 'arthadesk_diag_' + Date.now();
-  try {
-    const { error } = await timed(() => sb.from('app_data').upsert(
-      { user_id:'diag_user', data_key:key, data_value:{ok:true}, updated_at:new Date().toISOString() },
-      { onConflict:'user_id,data_key' }
+  // ── TEST 5+6: Write/Read ──────────────────────────────────
+  const tkey='diag_'+Date.now();
+  L('Test 5: Write...','b');
+  try{
+    const {error}=await T(()=>sb.from('app_data').upsert(
+      {user_id:'diag',data_key:tkey,data_value:{ok:true},updated_at:new Date().toISOString()},
+      {onConflict:'user_id,data_key'}
     ));
-    if (error) throw error;
-    set('write','✅ OK','ok','Write successful');
-    log('Write OK ✅','ok');
-
-    // Read back
-    try {
-      const { data, error: re } = await timed(() =>
-        sb.from('app_data').select('data_value').eq('user_id','diag_user').eq('data_key',key).single()
-      );
-      if (re) throw re;
-      set('read','✅ OK','ok','Read successful ✓');
-      log('Read OK ✅','ok');
-      // Cleanup
-      sb.from('app_data').delete().eq('user_id','diag_user').eq('data_key',key).then(()=>{});
-    } catch(e) {
-      set('read','❌ Failed','fail',e.message);
-      log('Read FAILED: '+e.message,'err');
+    if(error){
+      B(7,'❌ Failed','fail',error.message.slice(0,60));
+      L('Write ERROR: '+error.message,'r');
+      if(error.message.includes('policy')||error.message.includes('RLS'))
+        document.getElementById('aRLS').classList.add('on');
+    }else{
+      B(7,'✅ OK','ok','Write successful');
+      L('Write OK ✅','g');
+      // Read back
+      L('Test 6: Read back...','b');
+      try{
+        const {data,error:re}=await T(()=>sb.from('app_data').select('data_value')
+          .eq('user_id','diag').eq('data_key',tkey).single());
+        if(re){B(8,'❌ Failed','fail',re.message);L('Read ERROR: '+re.message,'r');}
+        else{B(8,'✅ OK','ok','Read matches ✓');L('Read OK ✅','g');}
+        sb.from('app_data').delete().eq('user_id','diag').eq('data_key',tkey).then(()=>{});
+      }catch(e){B(8,'❌ Timeout','fail');L('Read timeout','r');}
     }
-  } catch(e) {
-    set('write','❌ Failed','fail',e.message);
-    set('read','—','warn','skipped');
-    log('Write FAILED: '+e.message,'err');
-    if (e.message?.includes('policy') || e.message?.includes('RLS')) {
-      log('→ RLS blocking writes. Run sync-fix.sql in Supabase.','warn');
-    }
-    return;
-  }
+  }catch(e){B(7,'❌ Timeout','fail');L('Write timeout','r');}
 
-  const fails = document.querySelectorAll('.badge.fail').length;
-  if (fails === 0) {
-    document.getElementById('alertOK').classList.add('show');
-    log('🎉 ALL TESTS PASSED!','ok');
-  } else {
-    log('⚠️ ' + fails + ' failure(s) — see above','warn');
+  // Summary
+  const fails=document.querySelectorAll('.badge.fail').length;
+  const warns=document.querySelectorAll('.badge.warn').length;
+  L('──────────────────────','b');
+  if(fails===0&&warns===0){
+    document.getElementById('aOK').classList.add('on');
+    L('🎉 ALL TESTS PASSED!','g');
+  }else{
+    L('⚠️ '+fails+' fail(s), '+warns+' warning(s) — check above','y');
   }
 }
 
-window.addEventListener('load', runAll);
+window.addEventListener('load',run);
 </script>
 </body>
 </html>
