@@ -1,17 +1,13 @@
 /* ============================================================
-   ArthaDesk Service Worker  v2.0
-   Enables: PWA install + Offline cache
+   ArthaDesk Service Worker  v4.0
+   IMPORTANT: Version bumped to force cache refresh on all devices
+   Old cached files with wrong credentials will be deleted.
    ============================================================ */
 
-const CACHE = 'arthadesk-v2';
+const CACHE = 'arthadesk-v4';
 
+/* Only cache static assets — NOT html files (they contain credentials) */
 const PRECACHE = [
-  '/ArthaDesk/',
-  '/ArthaDesk/index.html',
-  '/ArthaDesk/admin.html',
-  '/ArthaDesk/manifest.json',
-  '/ArthaDesk/admin-manifest.json',
-  '/ArthaDesk/sw.js',
   '/ArthaDesk/icons/icon-192.png',
   '/ArthaDesk/icons/icon-512.png',
   '/ArthaDesk/icons/admin-192.png',
@@ -22,49 +18,50 @@ const PRECACHE = [
 self.addEventListener('install', e => {
   self.skipWaiting();
   e.waitUntil(
-    caches.open(CACHE).then(c => {
-      return Promise.allSettled(
-        PRECACHE.map(url => c.add(url).catch(() => {}))
-      );
-    })
+    caches.open(CACHE).then(c =>
+      Promise.allSettled(PRECACHE.map(url => c.add(url).catch(() => {})))
+    )
   );
 });
 
-/* ── ACTIVATE ────────────────────────────────── */
+/* ── ACTIVATE: delete ALL old caches ─────────── */
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
+      Promise.all(keys.filter(k => k !== CACHE).map(k => {
+        console.log('[SW] Deleting old cache:', k);
+        return caches.delete(k);
+      }))
     ).then(() => self.clients.claim())
   );
 });
 
-/* ── FETCH — Network first, cache fallback ───── */
+/* ── FETCH ───────────────────────────────────── */
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
-  
+
   const url = new URL(e.request.url);
-  
-  // Skip cross-origin requests (Supabase API, Google Fonts, CDN)
+
+  // Always fetch from network for cross-origin (Supabase, CDNs)
   if (url.origin !== self.location.origin) return;
 
+  // Always fetch HTML files fresh from network (contain credentials)
+  if (url.pathname.endsWith('.html') || url.pathname.endsWith('/')) {
+    e.respondWith(
+      fetch(e.request).catch(() => caches.match(e.request))
+    );
+    return;
+  }
+
+  // For icons/assets: network first, cache fallback
   e.respondWith(
     fetch(e.request)
       .then(res => {
-        if (res && res.status === 200 && res.type !== 'opaque') {
-          const clone = res.clone();
-          caches.open(CACHE).then(c => c.put(e.request, clone));
+        if (res && res.status === 200) {
+          caches.open(CACHE).then(c => c.put(e.request, res.clone()));
         }
         return res;
       })
-      .catch(() =>
-        caches.match(e.request).then(cached => {
-          if (cached) return cached;
-          // For HTML navigation, serve index as fallback
-          if (e.request.mode === 'navigate') {
-            return caches.match('/ArthaDesk/index.html');
-          }
-        })
-      )
+      .catch(() => caches.match(e.request))
   );
 });

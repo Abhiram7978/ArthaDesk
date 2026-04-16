@@ -568,6 +568,19 @@ select.form-control option{background:var(--surface)}
 (function() {
   'use strict';
 
+  // ── Clear old service worker caches on startup ──────────────
+  // This ensures stale cached HTML (with wrong credentials) is deleted
+  if ('serviceWorker' in navigator && 'caches' in window) {
+    caches.keys().then(function(keys) {
+      keys.forEach(function(key) {
+        if (key !== 'arthadesk-v4') {
+          console.log('[ArthaDesk] Clearing old cache:', key);
+          caches.delete(key);
+        }
+      });
+    }).catch(function() {});
+  }
+
   // ── Only intercept arthadesk_ keys ─────────────────────────
   const PREFIX = 'arthadesk_';
   const ADE_PREFIXES = ['arthadesk_', 'ade_'];
@@ -588,8 +601,12 @@ select.form-control option{background:var(--surface)}
 
   // ── Init Supabase (config injected before this script) ─────
   function _initSB() {
-    if (!window.SUPABASE_URL || window.SUPABASE_URL.includes('YOUR_PROJECT')) return;
-    if (!window.supabase?.createClient) return;
+    if (!window.SUPABASE_URL || window.SUPABASE_URL.includes('YOUR_PROJECT')) {
+      console.error('[ArthaDesk] SUPABASE_URL not set!'); return;
+    }
+    if (!window.supabase?.createClient) {
+      console.error('[ArthaDesk] Supabase SDK not loaded!'); return;
+    }
     _sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
       realtime: { params: { eventsPerSecond: 10 } }
@@ -851,9 +868,19 @@ select.form-control option{background:var(--surface)}
         return;
       }
 
+      // If Supabase not ready yet, wait up to 6 seconds
       if (!_sb) {
-        if (errEl) { errEl.textContent = '❌ Not connected to server. Check internet.'; errEl.classList.add('show'); }
-        return;
+        if (errEl) { errEl.textContent = '⏳ Connecting to server...'; errEl.classList.add('show'); }
+        let waited = 0;
+        while (!_sb && waited < 6000) {
+          await new Promise(r => setTimeout(r, 200));
+          waited += 200;
+        }
+        if (!_sb) {
+          if (errEl) { errEl.textContent = '❌ Cannot reach server. Check internet and try again.'; errEl.classList.add('show'); }
+          return;
+        }
+        if (errEl) errEl.classList.remove('show');
       }
 
       const btn = document.querySelector('#loginScreen .auth-btn-primary') ||
@@ -935,7 +962,6 @@ select.form-control option{background:var(--surface)}
         if (btn) { btn.textContent = btn._orig || 'Sign In'; btn.disabled = false; }
         _setErr('loginError', '❌ ' + err.message);
       }
-    };
   }
 
   function _setErr(id, msg) {
@@ -8188,16 +8214,20 @@ function showForgotPwd() { showScreen('forgotScreen'); }
 
 // ================== LOGIN — handled by Supabase Layer v6 ==================
 function doLogin() {
-  // This sync version is overridden by the async Supabase version in layer v6.
-  // If called before override is ready, wait briefly and retry.
+  // Delegates to async Supabase version set by layer v6
   if (typeof window._supabaseLoginReady === 'function') {
     window._supabaseLoginReady();
+  } else if (typeof window.doLogin._async === 'function') {
+    window.doLogin._async();
   } else {
     var errEl = document.getElementById('loginError');
-    if (errEl) { errEl.textContent = '⏳ Connecting... please try again.'; errEl.classList.add('show'); }
+    if (errEl) { errEl.textContent = '⏳ Loading... please tap Sign In again in 2 seconds.'; errEl.classList.add('show'); }
+    // Retry in 1 second
     setTimeout(function() {
-      if (typeof window._supabaseLoginReady === 'function') window._supabaseLoginReady();
-    }, 500);
+      if (typeof window._supabaseLoginReady === 'function') {
+        window._supabaseLoginReady();
+      }
+    }, 1000);
   }
 }
 
