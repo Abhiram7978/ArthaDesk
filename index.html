@@ -547,423 +547,219 @@ select.form-control option{background:var(--surface)}
   window.ARTHADESK_CONFIG  = { appName:'ArthaDesk', version:'3.9', localCache:true, syncInterval:30000 };
   </script>
 <script>
-/* ArthaDesk Sync Layer v6 — injected early, before main app */
-/**
- * ArthaDesk — Supabase Sync Layer v6.0
- * ═══════════════════════════════════════════════════════════════
- * STRATEGY: Proxy localStorage + intercept ALL writes/reads
- * 
- * HOW IT WORKS:
- *   1. On login → pull ALL user data from Supabase into localStorage
- *   2. Intercept ALL localStorage.setItem calls → mirror to Supabase
- *   3. Supabase realtime → on change from another device → update
- *      localStorage AND re-render UI
- *   4. Original app code runs unchanged — it thinks it's using 
- *      localStorage but every write goes to Supabase too
- *
- * This script must run BEFORE the main app script.
- * It is injected as the FIRST script in <head>.
- * ═══════════════════════════════════════════════════════════════
- */
+/* ArthaDesk Sync Layer v7 — Supabase-only, timeout-safe */
 (function() {
   'use strict';
 
-  // ── Clear old service worker caches on startup ──────────────
-  // This ensures stale cached HTML (with wrong credentials) is deleted
+  // ── Clear old service worker caches ────────────────────────
   if ('serviceWorker' in navigator && 'caches' in window) {
     caches.keys().then(function(keys) {
-      keys.forEach(function(key) {
-        if (key !== 'arthadesk-v4') {
-          console.log('[ArthaDesk] Clearing old cache:', key);
-          caches.delete(key);
-        }
+      keys.forEach(function(k) {
+        if (k !== 'arthadesk-v4') caches.delete(k);
       });
     }).catch(function() {});
   }
 
-  // ── Only intercept arthadesk_ keys ─────────────────────────
-  const PREFIX = 'arthadesk_';
-  const ADE_PREFIXES = ['arthadesk_', 'ade_'];
-  
-  function isAppKey(key) {
-    if (!key) return false;
-    return ADE_PREFIXES.some(p => key.startsWith(p));
-  }
+  // ── Keys ────────────────────────────────────────────────────
+  const APP_KEYS = ['arthadesk_', 'ade_'];
+  function isAppKey(k) { return k && APP_KEYS.some(p => k.startsWith(p)); }
 
   // ── State ───────────────────────────────────────────────────
-  let _sb = null;           // Supabase client
-  let _uid = null;          // approved_users.id
-  let _rtChannel = null;    // realtime channel
-  let _writing = false;     // prevent realtime→write loop
-  let _ready = false;       // Supabase ready?
-  let _pendingWrites = [];  // writes queued before login
-  let _sessionHandled = false; // true once login/restore completes
+  let _sb       = null;
+  let _uid      = null;
+  let _rtCh     = null;
+  let _writing  = false;
+  let _ready    = false;
+  let _sessionHandled = false;
 
-  // ── Init Supabase (config injected before this script) ─────
-  function _initSB() {
-    if (!window.SUPABASE_URL || window.SUPABASE_URL.includes('YOUR_PROJECT')) {
-      console.error('[ArthaDesk] SUPABASE_URL not set!'); return;
-    }
-    if (!window.supabase?.createClient) {
-      console.error('[ArthaDesk] Supabase SDK not loaded!'); return;
-    }
-    _sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, {
-    auth: { persistSession: false, autoRefreshToken: false },
-      realtime: { params: { eventsPerSecond: 10 } }
-    });
-    window._supabaseClient = _sb;
-    _ready = true;
-    console.log('[ArthaDesk v6] Supabase ready ✅');
+  const SB_TIMEOUT = 10000; // 10 seconds max for any Supabase call
+
+  // ── Timeout wrapper for ALL Supabase calls ──────────────────
+  function sbCall(fn) {
+    return Promise.race([
+      fn().catch(e => ({ data: null, error: e, count: null })),
+      new Promise(resolve =>
+        setTimeout(() => resolve({ data: null, error: new Error('TIMEOUT'), count: null }), SB_TIMEOUT)
+      )
+    ]);
   }
 
-  // Try to init now; if supabase SDK not loaded yet, wait for it
-  if (window.supabase?.createClient) {
+  // ── Init Supabase ───────────────────────────────────────────
+  function _initSB() {
+    if (!window.SUPABASE_URL || window.SUPABASE_URL.includes('YOUR_PROJECT')) {
+      console.error('[v7] SUPABASE_URL not configured'); return;
+    }
+    if (!window.supabase || !window.supabase.createClient) {
+      console.error('[v7] Supabase SDK not loaded'); return;
+    }
+    try {
+      _sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+        realtime: { params: { eventsPerSecond: 10 } }
+      });
+      window._supabaseClient = _sb;
+      _ready = true;
+      console.log('[ArthaDesk v7] Supabase ready ✅');
+    } catch(e) {
+      console.error('[v7] createClient failed:', e.message);
+    }
+  }
+
+  // Init immediately if SDK ready, else poll
+  if (window.supabase && window.supabase.createClient) {
     _initSB();
   } else {
-    // SDK loads async — init when it's ready
-    const _checkInterval = setInterval(() => {
-      if (window.supabase?.createClient) {
-        clearInterval(_checkInterval);
-        _initSB();
+    const t = setInterval(() => {
+      if (window.supabase && window.supabase.createClient) {
+        clearInterval(t); _initSB();
       }
     }, 50);
   }
 
-  // ── INTERCEPT localStorage ──────────────────────────────────
-  const _realLS = window.localStorage; // keep reference to real localStorage
-  
-  const _lsProxy = {
-    getItem(key) {
-      return _realLS.getItem(key);
+  // ── localStorage proxy ──────────────────────────────────────
+  const _realLS = window.localStorage;
+  const _proxy = {
+    getItem(k)    { return _realLS.getItem(k); },
+    setItem(k, v) {
+      _realLS.setItem(k, v);
+      if (isAppKey(k) && _uid && !_writing) _sbSave(k, v);
     },
-    setItem(key, value) {
-      _realLS.setItem(key, value);
-      // Mirror to Supabase for app keys
-      if (isAppKey(key) && _uid && !_writing) {
-        _supabaseSave(key, value);
-      }
+    removeItem(k) {
+      _realLS.removeItem(k);
+      if (isAppKey(k) && _uid && !_writing) _sbDel(k);
     },
-    removeItem(key) {
-      _realLS.removeItem(key);
-      if (isAppKey(key) && _uid && !_writing) {
-        _supabaseDelete(key);
-      }
-    },
-    clear() {
-      _realLS.clear();
-    },
-    key(n) { return _realLS.key(n); },
-    get length() { return _realLS.length; }
+    clear()       { _realLS.clear(); },
+    key(n)        { return _realLS.key(n); },
+    get length()  { return _realLS.length; }
   };
-
-  // Proxy localStorage (catches ALL direct setItem calls)
   try {
-    Object.defineProperty(window, 'localStorage', {
-      get: () => _lsProxy,
-      configurable: true
+    Object.defineProperty(window, 'localStorage', { get: () => _proxy, configurable: true });
+    console.log('[ArthaDesk v7] localStorage proxy active ✅');
+  } catch(e) { console.warn('[v7] proxy failed:', e.message); }
+
+  // ── Supabase write/delete ───────────────────────────────────
+  function _sbSave(key, rawVal) {
+    if (!_sb || !_uid) return;
+    let val; try { val = JSON.parse(rawVal); } catch(_) { val = rawVal; }
+    sbCall(() => _sb.from('app_data').upsert(
+      { user_id: _uid, data_key: key, data_value: val, updated_at: new Date().toISOString() },
+      { onConflict: 'user_id,data_key' }
+    )).then(({ error }) => {
+      if (error && error.message !== 'TIMEOUT')
+        console.warn('[v7] save error:', key, error.message);
     });
-    console.log('[ArthaDesk v6] localStorage proxy active ✅');
-  } catch(e) {
-    console.warn('[ArthaDesk v6] Could not proxy localStorage:', e.message);
   }
 
-  // ── SUPABASE WRITE ──────────────────────────────────────────
-  function _supabaseSave(key, rawValue) {
+  function _sbDel(key) {
     if (!_sb || !_uid) return;
-    let parsed;
-    try { parsed = JSON.parse(rawValue); } catch(_) { parsed = rawValue; }
-    _sb.from('app_data')
-      .upsert(
-        { user_id: _uid, data_key: key, data_value: parsed,
-          updated_at: new Date().toISOString() },
-        { onConflict: 'user_id,data_key' }
-      )
-      .then(({ error }) => {
-        if (error) console.error('[sb.save] key:', key, error.message);
-      });
+    sbCall(() => _sb.from('app_data').delete().match({ user_id: _uid, data_key: key }))
+      .then(({ error }) => { if (error && error.message !== 'TIMEOUT') console.warn('[v7] del error:', error.message); });
   }
 
-  function _supabaseDelete(key) {
-    if (!_sb || !_uid) return;
-    _sb.from('app_data').delete()
-      .match({ user_id: _uid, data_key: key })
-      .then(({ error }) => { if (error) console.error('[sb.del]', error.message); });
-  }
-
-  // ── PULL ALL USER DATA FROM SUPABASE INTO localStorage ──────
-  async function _pullFromSupabase(uid) {
+  // ── Pull ALL user data from Supabase ────────────────────────
+  async function _pull(uid) {
     if (!_sb) return false;
-    const { data, error } = await _sb
-      .from('app_data')
-      .select('data_key, data_value')
-      .eq('user_id', uid);
-
-    if (error) { console.error('[pull]', error.message); return false; }
-    if (!data?.length) { console.log('[pull] No data in Supabase yet.'); return false; }
-
+    const { data, error } = await sbCall(() =>
+      _sb.from('app_data').select('data_key, data_value').eq('user_id', uid)
+    );
+    if (error) { console.warn('[v7] pull:', error.message); return false; }
+    if (!data || !data.length) { console.log('[v7] pull: no data yet'); return false; }
     _writing = true;
     data.forEach(row => {
-      try {
-        _realLS.setItem(row.data_key, JSON.stringify(row.data_value));
-      } catch(_) {}
+      try { _realLS.setItem(row.data_key, JSON.stringify(row.data_value)); } catch(_) {}
     });
     _writing = false;
-
-    console.log('[ArthaDesk v6] Pulled', data.length, 'keys from Supabase ✅');
+    console.log('[v7] pulled', data.length, 'keys ✅');
     return true;
   }
 
-  // ── PUSH ALL localStorage TO SUPABASE ───────────────────────
-  async function _pushToSupabase(uid) {
+  // ── Push ALL localStorage to Supabase ───────────────────────
+  async function _push(uid) {
     if (!_sb) return;
     const rows = [];
     for (let i = 0; i < _realLS.length; i++) {
-      const key = _realLS.key(i);
-      if (!isAppKey(key)) continue;
-      try {
-        const val = JSON.parse(_realLS.getItem(key));
-        rows.push({ user_id: uid, data_key: key, data_value: val,
-                    updated_at: new Date().toISOString() });
-      } catch(_) {}
+      const k = _realLS.key(i);
+      if (!isAppKey(k)) continue;
+      try { rows.push({ user_id: uid, data_key: k, data_value: JSON.parse(_realLS.getItem(k)), updated_at: new Date().toISOString() }); } catch(_) {}
     }
     if (!rows.length) return;
-
-    // Batch upsert in chunks of 50
     for (let i = 0; i < rows.length; i += 50) {
-      const chunk = rows.slice(i, i + 50);
-      const { error } = await _sb.from('app_data')
-        .upsert(chunk, { onConflict: 'user_id,data_key' });
-      if (error) console.error('[push chunk]', error.message);
+      const { error } = await sbCall(() =>
+        _sb.from('app_data').upsert(rows.slice(i, i+50), { onConflict: 'user_id,data_key' })
+      );
+      if (error && error.message !== 'TIMEOUT') console.warn('[v7] push chunk:', error.message);
     }
-    console.log('[ArthaDesk v6] Pushed', rows.length, 'keys to Supabase ✅');
+    console.log('[v7] pushed', rows.length, 'keys ✅');
   }
 
-  // ── REALTIME ────────────────────────────────────────────────
-  function _startRealtime(uid) {
-    if (_rtChannel) { _sb.removeChannel(_rtChannel); _rtChannel = null; }
-
-    _rtChannel = _sb.channel('ad_sync_' + uid)
-      .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'app_data',
-        filter: `user_id=eq.${uid}`
-      }, (payload) => {
+  // ── Realtime ────────────────────────────────────────────────
+  function _startRT(uid) {
+    if (!_sb) return;
+    if (_rtCh) { try { _sb.removeChannel(_rtCh); } catch(_) {} _rtCh = null; }
+    _rtCh = _sb.channel('ad_' + uid)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'app_data', filter: 'user_id=eq.' + uid }, p => {
         if (_writing) return;
-        const key = payload.new?.data_key || payload.old?.data_key;
-        if (!key) return;
-
-        console.log('[Realtime] Change:', payload.eventType, key);
         _writing = true;
-
-        if (payload.eventType === 'DELETE') {
-          _realLS.removeItem(key);
-        } else {
-          try {
-            _realLS.setItem(key, JSON.stringify(payload.new.data_value));
-          } catch(_) {}
-        }
+        const k = p.new?.data_key || p.old?.data_key;
+        if (!k) { _writing = false; return; }
+        if (p.eventType === 'DELETE') { try { _realLS.removeItem(k); } catch(_) {} }
+        else { try { _realLS.setItem(k, JSON.stringify(p.new.data_value)); } catch(_) {} }
         _writing = false;
-
-        // If this is the active company data, reload it
-        if (window._activeCompanyKey === key) {
-          _reloadCompanyState();
-        }
-
-        _pulse(); // show sync dot
+        if (window._activeCompanyKey === k) _reloadUI();
+        _pulse();
       })
-      .subscribe(status => {
-        console.log('[Realtime]', status);
-        const dot = document.getElementById('_ad_rt_dot');
-        if (dot) {
-          dot.style.background = status === 'SUBSCRIBED' ? '#22c55e' : '#fbbf24';
-          dot.title = status === 'SUBSCRIBED' ? '🟢 Live sync active' : '🟡 Connecting...';
-        }
-      });
+      .subscribe(status => { console.log('[v7] RT:', status); _dot(status === 'SUBSCRIBED'); });
   }
 
-  function _reloadCompanyState() {
+  function _reloadUI() {
     try {
-      // Reload active company data into memory
       if (window._activeCompanyKey && typeof loadCompanyState === 'function') {
-        const cName = (window.registeredCompanies || []).find(c =>
-          typeof companyKey === 'function' && companyKey(c.name) === window._activeCompanyKey
-        );
-        if (cName) loadCompanyState(cName.name);
+        const c = (window.registeredCompanies||[]).find(x =>
+          typeof companyKey==='function' && companyKey(x.name)===window._activeCompanyKey);
+        if (c) loadCompanyState(c.name);
       }
-      // Re-render
-      ['renderDashboard','renderAllMasters','rebuildInvoiceListUI',
-       'rebuildPurchaseListUI','rebuildReceiptListUI','rebuildPaymentListUI',
-       'updateDashInfoBar'].forEach(fn => {
-        if (typeof window[fn] === 'function') {
-          try { window[fn](); } catch(_) {}
-        }
+      ['renderDashboard','renderAllMasters','rebuildInvoiceListUI','rebuildPurchaseListUI'].forEach(f => {
+        if (typeof window[f] === 'function') try { window[f](); } catch(_) {}
       });
-    } catch(e) { console.error('[reloadCompanyState]', e.message); }
+    } catch(_) {}
   }
 
   function _pulse() {
-    let dot = document.getElementById('_ad_rt_dot');
-    if (!dot) return;
-    dot.style.transform = 'scale(2)';
-    dot.style.boxShadow = '0 0 12px #00d4aa';
-    setTimeout(() => {
-      dot.style.transform = 'scale(1)';
-      dot.style.boxShadow = '0 0 8px #22c55e';
-    }, 500);
+    const d = document.getElementById('_ad_dot');
+    if (!d) return;
+    d.style.transform='scale(2)'; d.style.background='#00d4aa';
+    setTimeout(() => { d.style.transform='scale(1)'; d.style.background='#22c55e'; }, 500);
   }
 
-  // ── SYNC INDICATOR DOT ──────────────────────────────────────
-  function _addSyncDot() {
-    if (document.getElementById('_ad_rt_dot')) return;
-    const dot = document.createElement('div');
-    dot.id = '_ad_rt_dot';
-    dot.style.cssText = [
-      'position:fixed', 'bottom:8px', 'left:8px',
-      'width:10px', 'height:10px', 'border-radius:50%',
-      'background:#fbbf24', 'z-index:99999',
-      'box-shadow:0 0 8px #fbbf24', 'transition:all .4s',
-      'cursor:pointer'
-    ].join(';');
-    dot.title = 'Connecting to live sync...';
-    dot.onclick = () => {
-      if (typeof showToast === 'function')
-        showToast('🟢 Supabase live sync active', 'success');
-    };
-    document.body.appendChild(dot);
+  function _dot(on) {
+    let d = document.getElementById('_ad_dot');
+    if (!d && document.body) {
+      d = document.createElement('div');
+      d.id = '_ad_dot';
+      d.style.cssText = 'position:fixed;bottom:8px;left:8px;width:10px;height:10px;border-radius:50%;z-index:99999;transition:all .4s;cursor:pointer';
+      d.title = 'Supabase sync';
+      document.body.appendChild(d);
+    }
+    if (d) { d.style.background = on ? '#22c55e' : '#f59e0b'; d.style.boxShadow = on ? '0 0 8px #22c55e' : '0 0 8px #f59e0b'; }
   }
 
-  // ── HIDE REGISTER ───────────────────────────────────────────
-  const _regStyle = document.createElement('style');
-  _regStyle.textContent = [
-    '#loginScreen .auth-footer-link{display:none!important}',
-    '#registerScreen{display:none!important}',
-  ].join('\n');
-  document.head.appendChild(_regStyle);
+  // ── Hide register ───────────────────────────────────────────
+  const _st = document.createElement('style');
+  _st.textContent = '#registerScreen{display:none!important}.auth-footer-link{display:none!important}';
+  document.head.appendChild(_st);
+  window.showRegister = () => { if(typeof showToast==='function') showToast('Contact admin to create account','danger'); };
+  window.doRegister   = window.showRegister;
 
-  window.showRegister = () => {
-    if (typeof showToast === 'function')
-      showToast('❌ Contact admin to create an account.', 'danger');
-  };
-  window.doRegister = window.showRegister;
+  // ── blSave / blLoad / blRemove ──────────────────────────────
+  window.blSave   = (k, v) => { try { _realLS.setItem(k, JSON.stringify(v)); } catch(_) {} };
+  window.blLoad   = (k, fb) => { try { const r=_realLS.getItem(k); return r!==null?JSON.parse(r):fb; } catch(_) { return fb; } };
+  window.blRemove = (k)    => { try { _realLS.removeItem(k); } catch(_) {} };
+  window.saveCompanyList = () => window.blSave('arthadesk_companies', window.registeredCompanies||[]);
+  window.loadCompanyList = () => { const l=window.blLoad('arthadesk_companies',[]); window.registeredCompanies=Array.isArray(l)?l:[]; };
+  window.saveUserList = () => {};
+  window.loadUserList = () => {};
 
-  // ── OVERRIDE doLogin ────────────────────────────────────────
-  // Wait for DOM, then override
-  // Expose login function as soon as Supabase is ready
-  // Called both immediately and on window.load
-  function _attachLogin() {
-    window.doLogin = _doLoginAsync;
-    window._supabaseLoginReady = _doLoginAsync;
-  }
-
-  async function _doLoginAsync() {
-      const emailEl = document.getElementById('loginEmail');
-      const pwdEl   = document.getElementById('loginPassword');
-      const email   = (emailEl?.value || '').trim().toLowerCase();
-      const pwd     = (pwdEl?.value   || '');
-
-      const errEl = document.getElementById('loginError');
-      if (errEl) { errEl.classList.remove('show'); }
-
-      if (!email || !pwd) {
-        if (errEl) { errEl.textContent = '❌ Enter email and password.'; errEl.classList.add('show'); }
-        return;
-      }
-
-      // If Supabase not ready yet, wait up to 6 seconds
-      if (!_sb) {
-        if (errEl) { errEl.textContent = '⏳ Connecting to server...'; errEl.classList.add('show'); }
-        let waited = 0;
-        while (!_sb && waited < 6000) {
-          await new Promise(r => setTimeout(r, 200));
-          waited += 200;
-        }
-        if (!_sb) {
-          if (errEl) { errEl.textContent = '❌ Cannot reach server. Check internet and try again.'; errEl.classList.add('show'); }
-          return;
-        }
-        if (errEl) errEl.classList.remove('show');
-      }
-
-      const btn = document.querySelector('#loginScreen .auth-btn-primary') ||
-                  document.querySelector('#loginScreen button[onclick*="doLogin"]');
-      if (btn) { btn._orig = btn.textContent; btn.textContent = '⏳ Verifying…'; btn.disabled = true; }
-
-      try {
-        const { data: rows, error } = await _sb
-          .from('approved_users').select('*').eq('email', email).limit(1);
-
-        if (btn) { btn.textContent = btn._orig || 'Sign In'; btn.disabled = false; }
-
-        if (error)         { _setErr('loginError', '❌ Server error. Try again.'); return; }
-        if (!rows?.length) { _setErr('loginError', '❌ Account not found. Contact admin.'); return; }
-
-        const user = rows[0];
-        if (!user.is_active) { _setErr('loginError', '🚫 Account blocked. Contact admin.'); return; }
-        if (user.password !== pwd) { _setErr('loginError', '❌ Incorrect password.'); return; }
-
-        // ── Login success ────────────────────────────────────────
-        _uid = user.id;
-        _sessionHandled = true;
-        window._approvedUserId = user.id;
-        window._adAppActive    = false; // at company list stage
-        window.currentUser = { id: user.id, email: user.email, name: user.full_name, isNew: false };
-
-        // Companies from admin assignment
-        const assigned = (user.assigned_companies || []).map(n => ({ name: n, gstin: '', city: '' }));
-        window.registeredCompanies = assigned;
-
-        // Save session to real localStorage (bypass proxy)
-        _writing = true;
-        _realLS.setItem('arthadesk_active_user', JSON.stringify(window.currentUser));
-        _realLS.setItem('arthadesk_companies',   JSON.stringify(window.registeredCompanies));
-        _writing = false;
-
-        // Start realtime immediately
-        _startRealtime(user.id);
-        _addSyncDot();
-
-        // ── Show company list FIRST (before any async work) ──────
-        if (window.registeredCompanies.length > 0) {
-          try { showCompanyList(); } catch(_) {}
-        } else {
-          if (typeof showToast === 'function')
-            showToast('⚠️ No companies assigned. Contact admin.', 'danger');
-        }
-
-        // ── Pull data from Supabase in background ────────────────
-        // IMPORTANT: Do NOT navigate or call showCompanyList after this
-        // The user may have already selected a company by the time pull finishes
-        _pullFromSupabase(user.id).then(hadData => {
-          if (!hadData) _pushToSupabase(user.id);
-          // Update company list from Supabase (may have more companies)
-          const latest = window.blLoad('arthadesk_companies', assigned);
-          if (Array.isArray(latest) && latest.length > 0) {
-            window.registeredCompanies = latest;
-          }
-          // If user is still at company list (not yet selected), refresh it
-          if (!window._adAppActive) {
-            try { renderCompanyCards(); } catch(_) {}
-          }
-          // If user already entered the app, reload their company data silently
-          if (window._adAppActive && window._activeCompanyKey) {
-            try {
-              const cName = (window.registeredCompanies || []).find(c =>
-                typeof companyKey === 'function' && companyKey(c.name) === window._activeCompanyKey
-              );
-              if (cName) {
-                loadCompanyState(cName.name);
-                if (typeof renderDashboard   === 'function') renderDashboard();
-                if (typeof renderAllMasters  === 'function') renderAllMasters();
-              }
-            } catch(_) {}
-          }
-        }).catch(e => console.error('[bg pull]', e.message));
-
-      } catch(err) {
-        if (btn) { btn.textContent = btn._orig || 'Sign In'; btn.disabled = false; }
-        _setErr('loginError', '❌ ' + err.message);
-      }
-  }
-
+  // ── setErr helper ───────────────────────────────────────────
   function _setErr(id, msg) {
     const el = document.getElementById(id);
     if (!el) return;
@@ -971,147 +767,177 @@ select.form-control option{background:var(--surface)}
     el.classList.add('show');
   }
 
-  
+  // ── _attachLogin ────────────────────────────────────────────
+  function _attachLogin() {
+    window.doLogin = _doLoginAsync;
+    window._supabaseLoginReady = _doLoginAsync;
+  }
+
+  // ── doLogin — async, with 10s timeout on each Supabase call ─
+  async function _doLoginAsync() {
+    const emailEl = document.getElementById('loginEmail');
+    const pwdEl   = document.getElementById('loginPassword');
+    const email   = (emailEl?.value||'').trim().toLowerCase();
+    const pwd     = (pwdEl?.value||'');
+
+    const errEl = document.getElementById('loginError');
+    if (errEl) errEl.classList.remove('show');
+
+    if (!email || !pwd) {
+      _setErr('loginError', '❌ Enter email and password.'); return;
+    }
+
+    // Wait up to 8s for Supabase to init
+    if (!_sb) {
+      _setErr('loginError', '⏳ Connecting...');
+      let w = 0;
+      while (!_sb && w < 8000) { await new Promise(r=>setTimeout(r,200)); w+=200; }
+      if (!_sb) { _setErr('loginError', '❌ Cannot reach server. Check internet.'); return; }
+      if (errEl) errEl.classList.remove('show');
+    }
+
+    const btn = document.querySelector('#loginScreen .auth-btn-primary') ||
+                document.querySelector('#loginScreen button[onclick*="doLogin"]');
+    if (btn) { btn._orig = btn.textContent; btn.textContent = '⏳ Verifying…'; btn.disabled = true; }
+
+    try {
+      const { data: rows, error } = await sbCall(() =>
+        _sb.from('approved_users').select('*').eq('email', email).limit(1)
+      );
+      if (btn) { btn.textContent = btn._orig||'Sign In'; btn.disabled = false; }
+
+      if (error?.message === 'TIMEOUT') { _setErr('loginError','⏱ Server timeout. Try again.'); return; }
+      if (error)        { _setErr('loginError','❌ Server error: '+error.message); return; }
+      if (!rows?.length){ _setErr('loginError','❌ Account not found. Contact admin.'); return; }
+
+      const user = rows[0];
+      if (!user.is_active) { _setErr('loginError','🚫 Account blocked. Contact admin.'); return; }
+      if (user.password !== pwd) { _setErr('loginError','❌ Incorrect password.'); return; }
+
+      // ✅ Login success
+      _uid = user.id;
+      _sessionHandled = true;
+      window._approvedUserId = user.id;
+      window._adAppActive    = false;
+      window.currentUser     = { id:user.id, email:user.email, name:user.full_name, isNew:false };
+
+      const assigned = (user.assigned_companies||[]).map(n=>({name:n,gstin:'',city:''}));
+      window.registeredCompanies = assigned;
+
+      _writing = true;
+      _realLS.setItem('arthadesk_active_user', JSON.stringify(window.currentUser));
+      _realLS.setItem('arthadesk_companies',   JSON.stringify(window.registeredCompanies));
+      _writing = false;
+
+      _startRT(user.id);
+      _dot(false);
+
+      // Show company list immediately
+      try { showCompanyList(); } catch(_) {}
+
+      // Pull data in background — do NOT navigate after
+      _pull(user.id).then(had => {
+        if (!had) _push(user.id);
+        const latest = window.blLoad('arthadesk_companies', assigned);
+        if (Array.isArray(latest) && latest.length) window.registeredCompanies = latest;
+        if (!window._adAppActive) { try { renderCompanyCards(); } catch(_) {} }
+        else if (window._activeCompanyKey) {
+          const c=(window.registeredCompanies||[]).find(x=>typeof companyKey==='function'&&companyKey(x.name)===window._activeCompanyKey);
+          if(c){try{loadCompanyState(c.name);if(typeof renderDashboard==='function')renderDashboard();}catch(_){}}
+        }
+      }).catch(e=>console.warn('[v7] bg pull:', e.message));
+
+    } catch(err) {
+      if (btn) { btn.textContent = btn._orig||'Sign In'; btn.disabled = false; }
+      _setErr('loginError','❌ '+err.message);
+    }
+  }
+
+  // ── doLogout ────────────────────────────────────────────────
   window.doLogout = function() {
-    if (_rtChannel && _sb) { _sb.removeChannel(_rtChannel); _rtChannel = null; }
-    _uid = null;
-    window._approvedUserId = null;
-    window.currentUser = null;
-    window.registeredCompanies = [];
-    // Clear ALL localStorage on logout — Supabase is source of truth
-    window._adAppActive = false;
-    _writing = true;
-    _realLS.clear();
-    _writing = false;
-    if (typeof showLogin === 'function') showLogin();
-    if (typeof showToast === 'function') showToast('Signed out. Local data cleared.', 'success');
+    if (_rtCh && _sb) { try { _sb.removeChannel(_rtCh); } catch(_) {} _rtCh = null; }
+    _uid = null; window._approvedUserId = null; window.currentUser = null;
+    window.registeredCompanies = []; window._adAppActive = false;
+    _writing = true; _realLS.clear(); _writing = false;
+    if (typeof showLogin==='function') showLogin();
+    if (typeof showToast==='function') showToast('Signed out.','success');
   };
 
-  // ── OVERRIDE doForgotPwd ─────────────────────────────────────
   window.doForgotPwd = function() {
-    if (typeof showToast === 'function')
-      showToast('Contact your admin to reset your password.', 'success');
-    const el = document.getElementById('forgotSuccess');
-    if (el) el.classList.add('show');
-    setTimeout(() => { if (typeof showLogin === 'function') showLogin(); }, 2500);
+    if (typeof showToast==='function') showToast('Contact admin to reset password.','success');
+    const el=document.getElementById('forgotSuccess'); if(el) el.classList.add('show');
+    setTimeout(()=>{if(typeof showLogin==='function')showLogin();},2500);
   };
 
-  // ── SESSION RESTORE ──────────────────────────────────────────
-  // Override the original startup to always check Supabase first
+  // ── Session restore on page load ────────────────────────────
   window.addEventListener('load', async function() {
     _attachLogin();
-    _addSyncDot();
+    _dot(false);
 
-    // Read saved session from real localStorage
-    // Skip if user already logged in manually (prevents race condition)
     if (_sessionHandled || window._sbSessionHandled || window._activeCompanyKey) return;
 
     let savedUser = null;
     try { savedUser = JSON.parse(_realLS.getItem('arthadesk_active_user')); } catch(_) {}
     if (!savedUser?.email) return;
 
-    // Wait for Supabase to init
-    let attempts = 0;
-    while (!_ready && attempts++ < 40) await new Promise(r => setTimeout(r, 50));
-    if (!_sb) return;
+    // Wait for Supabase (max 6s)
+    let w = 0;
+    while (!_ready && w < 6000) { await new Promise(r=>setTimeout(r,50)); w+=50; }
+    if (!_sb) {
+      // Supabase unavailable — still restore from localStorage cache
+      _uid = savedUser.id; window._approvedUserId = savedUser.id;
+      window.currentUser = savedUser;
+      const cached = window.blLoad('arthadesk_companies', []);
+      window.registeredCompanies = Array.isArray(cached) && cached.length ? cached : [];
+      if (window.registeredCompanies.length) { try { showCompanyList(); } catch(_) {} }
+      return;
+    }
 
     try {
-      // Verify user still active
-      const { data: rows } = await _sb
-        .from('approved_users').select('*')
-        .eq('email', savedUser.email).eq('is_active', true).limit(1);
-
-      if (!rows?.length) {
-        _realLS.removeItem('arthadesk_active_user');
-        if (typeof showToast === 'function')
-          showToast('⚠️ Access revoked. Contact admin.', 'danger');
+      const { data: rows, error } = await sbCall(() =>
+        _sb.from('approved_users').select('*').eq('email', savedUser.email).eq('is_active', true).limit(1)
+      );
+      if (error || !rows?.length) {
+        if (error?.message === 'TIMEOUT') {
+          // Timeout — restore from cache
+          _uid = savedUser.id; window.currentUser = savedUser; window._approvedUserId = savedUser.id;
+          const cached = window.blLoad('arthadesk_companies', []);
+          window.registeredCompanies = Array.isArray(cached) && cached.length ? cached : [];
+          if (window.registeredCompanies.length) { try { showCompanyList(); } catch(_) {} }
+        } else {
+          _realLS.removeItem('arthadesk_active_user');
+          if (typeof showToast==='function') showToast('Access revoked. Contact admin.','danger');
+        }
         return;
       }
 
       const user = rows[0];
-      _uid = user.id;
+      _uid = user.id; _sessionHandled = true;
       window._approvedUserId = user.id;
-      window.currentUser = { id: user.id, email: user.email, name: user.full_name, isNew: false };
+      window.currentUser = { id:user.id, email:user.email, name:user.full_name, isNew:false };
+      window.registeredCompanies = (user.assigned_companies||[]).map(n=>({name:n,gstin:'',city:''}));
 
-      const assigned = (user.assigned_companies || []).map(n => ({ name: n, gstin: '', city: '' }));
-      window.registeredCompanies = assigned;
+      _startRT(user.id);
 
-      // Pull fresh data from Supabase
-      const hadData = await _pullFromSupabase(user.id);
-      if (!hadData) await _pushToSupabase(user.id);
+      // Show company list first
+      if (window.registeredCompanies.length) { try { showCompanyList(); } catch(_) {} }
 
-      // Start realtime
-      _startRealtime(user.id);
+      // Pull in background
+      _pull(user.id).then(had => {
+        if (!had) _push(user.id);
+        const latest = window.blLoad('arthadesk_companies', []);
+        if (Array.isArray(latest) && latest.length) window.registeredCompanies = latest;
+        if (!window._adAppActive) { try { renderCompanyCards(); } catch(_) {} }
+        else if (window._activeCompanyKey) {
+          const c=(window.registeredCompanies||[]).find(x=>typeof companyKey==='function'&&companyKey(x.name)===window._activeCompanyKey);
+          if(c){try{loadCompanyState(c.name);if(typeof renderDashboard==='function')renderDashboard();}catch(_){}}
+        }
+      }).catch(e=>console.warn('[v7] restore pull:', e.message));
 
-      // Navigate — only if user hasn't already entered the app
-      const companies = window.blLoad('arthadesk_companies', assigned);
-      window.registeredCompanies = Array.isArray(companies) ? companies : assigned;
-
-      _sessionHandled = true;
-      // Only navigate if user hasn't already opened a company
-      if (!window._activeCompanyKey && !window._sbSessionHandled &&
-          window.registeredCompanies.length > 0) {
-        // Show company list FIRST — before any async Supabase pull
-        try { showCompanyList(); } catch(_) {}
-
-        // Pull fresh data in background — do NOT navigate after pull
-        _pullFromSupabase(_uid).then(hadData => {
-          if (!hadData) _pushToSupabase(_uid);
-          const latest = window.blLoad('arthadesk_companies', []);
-          if (Array.isArray(latest) && latest.length > 0)
-            window.registeredCompanies = latest;
-          // Refresh only if still at company list
-          if (!window._adAppActive) {
-            try { renderCompanyCards(); } catch(_) {}
-          }
-          // If already in app, silently reload company data
-          if (window._adAppActive && window._activeCompanyKey) {
-            try {
-              const cName = (window.registeredCompanies || []).find(c =>
-                typeof companyKey === 'function' &&
-                companyKey(c.name) === window._activeCompanyKey
-              );
-              if (cName) {
-                loadCompanyState(cName.name);
-                if (typeof renderDashboard  === 'function') renderDashboard();
-                if (typeof renderAllMasters === 'function') renderAllMasters();
-              }
-            } catch(_) {}
-          }
-        }).catch(e => console.error('[bg restore]', e));
-      }
-    } catch(e) {
-      console.error('[SessionRestore]', e.message);
-    }
+    } catch(e) { console.error('[v7] session restore error:', e.message); }
   });
 
-  // Override blSave / blLoad / blRemove (for backward compat)
-  window.blSave = function(key, data) {
-    try { _realLS.setItem(key, JSON.stringify(data)); } catch(_) {}
-    // setItem proxy handles Supabase write automatically
-  };
-  window.blLoad = function(key, fallback) {
-    try {
-      const r = _realLS.getItem(key);
-      if (r !== null) return JSON.parse(r);
-    } catch(_) {}
-    return fallback;
-  };
-  window.blRemove = function(key) {
-    try { _realLS.removeItem(key); } catch(_) {}
-    // removeItem proxy handles Supabase delete
-  };
-
-  // Company/user list
-  window.saveCompanyList = () => window.blSave('arthadesk_companies', window.registeredCompanies || []);
-  window.loadCompanyList = () => {
-    const l = window.blLoad('arthadesk_companies', []);
-    window.registeredCompanies = Array.isArray(l) ? l : [];
-  };
-  window.saveUserList = () => {};
-  window.loadUserList = () => {};
-
-  console.log('[ArthaDesk v6] Layer loaded — localStorage proxy active ✅');
+  console.log('[ArthaDesk v7] Layer loaded ✅');
 })();
 
 </script>
