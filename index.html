@@ -879,6 +879,8 @@ select.form-control option{background:var(--surface)}
     _uid = null; window._approvedUserId = null; window.currentUser = null;
     window.registeredCompanies = []; window._adAppActive = false;
     _writing = true; _realLS.clear(); _writing = false;
+    // Clear active company on logout
+    try { _realLS.removeItem('arthadesk_active_company'); } catch(_) {}
     if (typeof showLogin==='function') showLogin();
     if (typeof showToast==='function') showToast('Signed out.','success');
   };
@@ -912,7 +914,33 @@ select.form-control option{background:var(--surface)}
     window.currentUser = savedUser;
     const cached = window.blLoad('arthadesk_companies', []);
     window.registeredCompanies = Array.isArray(cached) && cached.length ? cached : [];
-    if (window.registeredCompanies.length) _safeShowCompanyList();
+
+    // Check if user had a company open in last session
+    const lastCompany = _realLS.getItem('arthadesk_active_company');
+    if (lastCompany && window.registeredCompanies.length) {
+      // Restore directly into the company — skip company list screen
+      _writing = true; // prevent Supabase writes during restore
+      window._adAppActive = true;
+      if (typeof companyKey === 'function') {
+        window._activeCompanyKey = companyKey(lastCompany);
+      }
+      _writing = false;
+      // Show company list briefly then auto-select after a tick
+      // (functions may not be available yet — wait for DOM)
+      setTimeout(function() {
+        try {
+          if (typeof selectCompany === 'function') {
+            var co = (window.registeredCompanies||[]).find(function(c){ return c.name === lastCompany; });
+            if (co) { selectCompany(co.name, co.gstin||'', co.city||''); return; }
+          }
+        } catch(_) {}
+        // Fallback: just show company list
+        window._adAppActive = false;
+        _safeShowCompanyList();
+      }, 100);
+    } else if (window.registeredCompanies.length) {
+      _safeShowCompanyList();
+    }
 
     // Wait for Supabase (max 5s)
     let w = 0;
@@ -7830,6 +7858,7 @@ function deleteCompany(companyName) {
 // ── LOAD COMPANY STATE ────────────────────────────────────────
 function loadCompanyState(companyName) {
   _activeCompanyKey = companyKey(companyName);
+  window._activeCompanyKey = _activeCompanyKey;
   var state = blLoad(_activeCompanyKey, null);
   if (!state) return false; // no saved data yet
 
@@ -8163,6 +8192,7 @@ function selectCompany(name, gstin, city) {
   // Store active company GSTIN for intra/inter detection
   window._activeCompanyGstin = gstin || '';
   _activeCompanyKey = companyKey(name);
+  window._activeCompanyKey = _activeCompanyKey; // keep window in sync
 
   // Reset all in-memory state before loading
   resetAppState();
@@ -8178,6 +8208,9 @@ function selectCompany(name, gstin, city) {
   if (nameEl && !nameEl.value) nameEl.value = name;
   var compGstinEl = document.getElementById('company-gstin');
   if (compGstinEl && !compGstinEl.value) compGstinEl.value = gstin || '';
+
+  // Save active company to localStorage for session persistence
+  try { localStorage.setItem('arthadesk_active_company', name); } catch(_) {}
 
   // Hide ALL auth screens (including loginScreen, companyListScreen)
   document.querySelectorAll('.auth-screen').forEach(function(s) {
@@ -12715,10 +12748,8 @@ var _pwaInstalled = false;
 window.addEventListener('beforeinstallprompt', function(e) {
   e.preventDefault();
   _pwaPrompt = e;
-  // Show banner after 4 seconds
-  setTimeout(function() {
-    if (!_pwaInstalled) showPWABanner();
-  }, 4000);
+  // Show install banner immediately
+  showPWABanner();
 });
 
 // Hide banner if already installed
@@ -12730,7 +12761,12 @@ window.addEventListener('appinstalled', function() {
 
 function showPWABanner() {
   var b = document.getElementById('pwaBanner');
-  if (b && _pwaPrompt) { b.style.display = 'flex'; }
+  if (b && _pwaPrompt && !_pwaInstalled) {
+    b.style.display = 'flex';
+    // Also show an install button in the app
+    var ib = document.getElementById('pwaInstallBtn');
+    if (ib) ib.style.display = 'flex';
+  }
 }
 
 function installPWA() {
