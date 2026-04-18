@@ -900,34 +900,47 @@ select.form-control option{background:var(--surface)}
     try { savedUser = JSON.parse(_realLS.getItem('arthadesk_active_user')); } catch(_) {}
     if (!savedUser?.email) return;
 
-    // Wait for Supabase (max 6s)
+    // ── Helper: only navigate if user has NOT already opened a company ──
+    function _safeShowCompanyList() {
+      if (window._adAppActive || window._activeCompanyKey) return; // already in app
+      try { showCompanyList(); } catch(_) {}
+    }
+
+    // Restore from localStorage IMMEDIATELY so user isn't staring at blank screen
+    _uid = savedUser.id;
+    window._approvedUserId = savedUser.id;
+    window.currentUser = savedUser;
+    const cached = window.blLoad('arthadesk_companies', []);
+    window.registeredCompanies = Array.isArray(cached) && cached.length ? cached : [];
+    if (window.registeredCompanies.length) _safeShowCompanyList();
+
+    // Wait for Supabase (max 5s)
     let w = 0;
-    while (!_ready && w < 6000) { await new Promise(r=>setTimeout(r,50)); w+=50; }
+    while (!_ready && w < 5000) { await new Promise(r=>setTimeout(r,50)); w+=50; }
+
     if (!_sb) {
-      // Supabase unavailable — still restore from localStorage cache
-      _uid = savedUser.id; window._approvedUserId = savedUser.id;
-      window.currentUser = savedUser;
-      const cached = window.blLoad('arthadesk_companies', []);
-      window.registeredCompanies = Array.isArray(cached) && cached.length ? cached : [];
-      if (window.registeredCompanies.length) { try { showCompanyList(); } catch(_) {} }
+      // Supabase unavailable — cache-only mode, already shown above
       return;
     }
 
     try {
+      // Verify session is still valid (5s timeout)
       const { data: rows, error } = await sbCall(() =>
-        _sb.from('approved_users').select('*').eq('email', savedUser.email).eq('is_active', true).limit(1)
+        _sb.from('approved_users').select('*')
+          .eq('email', savedUser.email).eq('is_active', true).limit(1)
       );
+
+      // If user already opened a company during the await, stop here
+      if (window._adAppActive || window._activeCompanyKey) return;
+
       if (error || !rows?.length) {
-        if (error?.message === 'TIMEOUT') {
-          // Timeout — restore from cache
-          _uid = savedUser.id; window.currentUser = savedUser; window._approvedUserId = savedUser.id;
-          const cached = window.blLoad('arthadesk_companies', []);
-          window.registeredCompanies = Array.isArray(cached) && cached.length ? cached : [];
-          if (window.registeredCompanies.length) { try { showCompanyList(); } catch(_) {} }
-        } else {
+        if (!error || error.message !== 'TIMEOUT') {
+          // Genuinely revoked — clear session
           _realLS.removeItem('arthadesk_active_user');
-          if (typeof showToast==='function') showToast('Access revoked. Contact admin.','danger');
+          if (typeof showLogin==='function') showLogin();
+          if (typeof showToast==='function') showToast('Session expired. Please log in again.','danger');
         }
+        // On timeout — already showing from cache, just continue
         return;
       }
 
@@ -939,18 +952,22 @@ select.form-control option{background:var(--surface)}
 
       _startRT(user.id);
 
-      // Show company list first
-      if (window.registeredCompanies.length) { try { showCompanyList(); } catch(_) {} }
+      // Show company list ONLY if user hasn't already entered app
+      _safeShowCompanyList();
 
-      // Pull in background
+      // Pull fresh data in background — NEVER navigate after this
       _pull(user.id).then(had => {
         if (!had) _push(user.id);
         const latest = window.blLoad('arthadesk_companies', []);
         if (Array.isArray(latest) && latest.length) window.registeredCompanies = latest;
-        if (!window._adAppActive) { try { renderCompanyCards(); } catch(_) {} }
-        else if (window._activeCompanyKey) {
-          const c=(window.registeredCompanies||[]).find(x=>typeof companyKey==='function'&&companyKey(x.name)===window._activeCompanyKey);
-          if(c){try{loadCompanyState(c.name);if(typeof renderDashboard==='function')renderDashboard();}catch(_){}}
+        // Only refresh company cards if still on company list screen
+        if (!window._adAppActive && !window._activeCompanyKey) {
+          try { renderCompanyCards(); } catch(_) {}
+        } else if (window._activeCompanyKey) {
+          // Already in app — silently reload data
+          const c=(window.registeredCompanies||[]).find(x=>
+            typeof companyKey==='function' && companyKey(x.name)===window._activeCompanyKey);
+          if(c) { try { loadCompanyState(c.name); if(typeof renderDashboard==='function') renderDashboard(); } catch(_) {} }
         }
       }).catch(e=>console.warn('[v7] restore pull:', e.message));
 
