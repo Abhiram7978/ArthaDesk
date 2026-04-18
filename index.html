@@ -576,8 +576,12 @@ select.form-control option{background:var(--surface)}
 
   // ── Timeout wrapper for ALL Supabase calls ──────────────────
   function sbCall(fn) {
+    // Promise.resolve() converts Supabase thenable to real Promise (needed for .catch)
     return Promise.race([
-      fn().catch(e => ({ data: null, error: e, count: null })),
+      Promise.resolve(fn()).then(
+        r  => r,
+        e  => ({ data: null, error: e, count: null })
+      ),
       new Promise(resolve =>
         setTimeout(() => resolve({ data: null, error: new Error('TIMEOUT'), count: null }), SB_TIMEOUT)
       )

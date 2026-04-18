@@ -83,7 +83,11 @@ function B(id,text,cls,det){
   if(d&&det!==undefined)d.textContent=det;
 }
 function T(fn){
-  return Promise.race([fn(),new Promise((_,r)=>setTimeout(()=>r(new Error('TIMEOUT after '+TO/1000+'s')),TO))]);
+  // Promise.resolve converts Supabase thenable to real Promise
+  return Promise.race([
+    Promise.resolve(fn()).then(r=>r, e=>({data:null,error:e,count:null})),
+    new Promise(resolve=>setTimeout(()=>resolve({data:null,error:new Error('TIMEOUT'),count:null}),TO))
+  ]);
 }
 
 async function run(){
