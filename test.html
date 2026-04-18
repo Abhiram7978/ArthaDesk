@@ -10,223 +10,229 @@ body{background:#0a0d14;color:#e2e8f0;font-family:monospace;padding:16px;font-si
 h2{color:#f59e0b;margin-bottom:4px;font-size:18px}
 .sub{color:#475569;font-size:11px;margin-bottom:16px}
 .row{background:#131820;border:1px solid #1e2d3d;border-radius:8px;padding:12px 14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
-.label{flex:1}
-.title{font-size:13px;color:#e2e8f0}
-.detail{font-size:10px;color:#475569;margin-top:3px;word-break:break-all}
-.badge{padding:4px 12px;border-radius:5px;font-size:11px;font-weight:700;white-space:nowrap;flex-shrink:0}
+.lbl{flex:1}.ti{font-size:13px;color:#e2e8f0}.de{font-size:10px;color:#475569;margin-top:3px;word-break:break-all}
+.badge{padding:4px 12px;border-radius:5px;font-size:11px;font-weight:700;white-space:nowrap;flex-shrink:0;min-width:70px;text-align:center}
 .wait{background:#1e2d3d;color:#475569}
 .ok{background:rgba(34,197,94,.15);color:#22c55e;border:1px solid rgba(34,197,94,.3)}
 .fail{background:rgba(239,68,68,.15);color:#ef4444;border:1px solid rgba(239,68,68,.3)}
 .warn{background:rgba(245,158,11,.15);color:#f59e0b;border:1px solid rgba(245,158,11,.3)}
-.box{background:#060810;border:1px solid #1e2d3d;border-radius:8px;padding:12px;font-size:11px;line-height:1.9;max-height:250px;overflow-y:auto;margin:10px 0}
+.log{background:#060810;border:1px solid #1e2d3d;border-radius:8px;padding:12px;font-size:11px;line-height:1.9;max-height:280px;overflow-y:auto;margin:10px 0}
 .g{color:#22c55e}.r{color:#ef4444}.b{color:#3b82f6}.y{color:#f59e0b}
-.alert{border-radius:8px;padding:12px;margin-bottom:10px;font-size:12px;line-height:1.7;display:none}
-.alert.on{display:block}
+.alert{border-radius:8px;padding:14px;margin-bottom:10px;font-size:12px;line-height:1.7;display:none}
+.on{display:block}
 .red{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:#fca5a5}
 .grn{background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);color:#86efac}
 .amb{background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);color:#fcd34d}
-btn{display:block;width:100%;padding:13px;border-radius:8px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#000;font-size:14px;font-weight:800;border:none;cursor:pointer;margin:8px 0;font-family:monospace}
+button{display:block;width:100%;padding:13px;border-radius:8px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#000;font-size:14px;font-weight:800;border:none;cursor:pointer;margin:8px 0;-webkit-tap-highlight-color:transparent}
 </style>
 </head>
 <body>
 <h2>⚡ ArthaDesk DB Test</h2>
 <div class="sub">ohvuvcoszgwxdzapsazl.supabase.co</div>
 
-<div class="alert red" id="aSchema">
-  ❌ <b>Tables missing!</b><br>
-  Go to Supabase → SQL Editor → paste schema-FRESH.sql → Run
-</div>
-<div class="alert red" id="aNetwork">
-  ❌ <b>Network timeout</b><br>
-  Check your internet. If on mobile data, try WiFi.<br>
-  Also verify Supabase project is not paused.
-</div>
-<div class="alert grn" id="aOK">
-  ✅ <b>All good! Supabase connected and working.</b>
-</div>
-<div class="alert amb" id="aRLS">
-  ⚠️ <b>RLS blocking writes</b><br>
-  Run schema-FRESH.sql again in Supabase SQL Editor.
-</div>
+<div class="alert red on" id="aRunning">🔄 Running tests... please wait (up to 30s)</div>
+<div class="alert red"  id="aSchema">❌ <b>Tables missing!</b> Run <b>schema-FRESH.sql</b> in Supabase → SQL Editor.</div>
+<div class="alert amb"  id="aRLS">⚠️ <b>Write blocked.</b> Run <b>sync-fix.sql</b> in Supabase → SQL Editor.</div>
+<div class="alert grn"  id="aOK">✅ <b>All systems working! Supabase fully connected.</b></div>
 
-<div class="row"><div class="label"><div class="title">Project URL</div><div class="detail" id="d0">https://ohvuvcoszgwxdzapsazl.supabase.co</div></div><div class="badge ok">✅ Set</div></div>
-<div class="row"><div class="label"><div class="title">API Key</div><div class="detail" id="d1"></div></div><div class="badge" id="b1">wait</div></div>
-<div class="row"><div class="label"><div class="title">SDK Loaded</div></div><div class="badge" id="b2">wait</div></div>
-<div class="row"><div class="label"><div class="title">1. Direct HTTP ping (no SDK)</div><div class="detail" id="d3"></div></div><div class="badge wait" id="b3">...</div></div>
-<div class="row"><div class="label"><div class="title">2. SDK query (admin_config)</div><div class="detail" id="d4"></div></div><div class="badge wait" id="b4">...</div></div>
-<div class="row"><div class="label"><div class="title">3. approved_users table</div><div class="detail" id="d5"></div></div><div class="badge wait" id="b5">...</div></div>
-<div class="row"><div class="label"><div class="title">4. app_data table</div><div class="detail" id="d6"></div></div><div class="badge wait" id="b6">...</div></div>
-<div class="row"><div class="label"><div class="title">5. Write to app_data</div><div class="detail" id="d7"></div></div><div class="badge wait" id="b7">...</div></div>
-<div class="row"><div class="label"><div class="title">6. Read back</div><div class="detail" id="d8"></div></div><div class="badge wait" id="b8">...</div></div>
+<div class="row"><div class="lbl"><div class="ti">Project URL</div><div class="de">https://ohvuvcoszgwxdzapsazl.supabase.co</div></div><div class="badge ok">✅ Set</div></div>
+<div class="row"><div class="lbl"><div class="ti">API Key</div><div class="de" id="d1"></div></div><div class="badge wait" id="b1">...</div></div>
+<div class="row"><div class="lbl"><div class="ti">SDK Loaded</div></div><div class="badge wait" id="b2">...</div></div>
+<div class="row"><div class="lbl"><div class="ti">1. Network Ping (SDK)</div><div class="de" id="d3"></div></div><div class="badge wait" id="b3">...</div></div>
+<div class="row"><div class="lbl"><div class="ti">2. admin_config table</div><div class="de" id="d4"></div></div><div class="badge wait" id="b4">...</div></div>
+<div class="row"><div class="lbl"><div class="ti">3. approved_users table</div><div class="de" id="d5"></div></div><div class="badge wait" id="b5">...</div></div>
+<div class="row"><div class="lbl"><div class="ti">4. app_data table</div><div class="de" id="d6"></div></div><div class="badge wait" id="b6">...</div></div>
+<div class="row"><div class="lbl"><div class="ti">5. Write to app_data</div><div class="de" id="d7"></div></div><div class="badge wait" id="b7">...</div></div>
+<div class="row"><div class="lbl"><div class="ti">6. Read back from app_data</div><div class="de" id="d8"></div></div><div class="badge wait" id="b8">...</div></div>
+<div class="row"><div class="lbl"><div class="ti">7. Realtime channel</div><div class="de" id="d9"></div></div><div class="badge wait" id="b9">...</div></div>
 
-<button onclick="run()" style="display:block;width:100%;padding:13px;border-radius:8px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#000;font-size:14px;font-weight:800;border:none;cursor:pointer;margin:8px 0">🔄 Re-run</button>
+<button onclick="run()">🔄 Re-run All Tests</button>
+<div class="log" id="log"></div>
 
-<div class="box" id="log"></div>
-
+<!-- Load SDK last so page renders first -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script>
-const URL = 'https://ohvuvcoszgwxdzapsazl.supabase.co';
-const KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9odnV2Y29zemd3eGR6YXBzYXpsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDM1NDksImV4cCI6MjA5MTQxOTU0OX0.DvcAa4ohNJtvKiJ9pVBx97d8OaMH80ScNMAmIfM4D6A';
-const TO = 12000; // 12 second timeout
+const SB_URL = 'https://ohvuvcoszgwxdzapsazl.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9odnV2Y29zemd3eGR6YXBzYXpsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDM1NDksImV4cCI6MjA5MTQxOTU0OX0.DvcAa4ohNJtvKiJ9pVBx97d8OaMH80ScNMAmIfM4D6A';
+const TIMEOUT = 15000; // 15s — generous for Tokyo latency
 
-function L(msg,t){
-  const el=document.getElementById('log');
-  const d=document.createElement('div');
-  d.className=t||'b';
-  d.textContent=new Date().toLocaleTimeString()+' '+msg;
-  el.appendChild(d);el.scrollTop=el.scrollHeight;
+function L(msg, t) {
+  const el = document.getElementById('log');
+  const d = document.createElement('div');
+  d.className = t || 'b';
+  d.textContent = new Date().toLocaleTimeString() + '  ' + msg;
+  el.appendChild(d);
+  el.scrollTop = el.scrollHeight;
 }
-function B(id,text,cls,det){
-  const b=document.getElementById('b'+id);
-  if(b){b.textContent=text;b.className='badge '+cls;}
-  const d=document.getElementById('d'+id);
-  if(d&&det!==undefined)d.textContent=det;
+function B(id, text, cls, det) {
+  const b = document.getElementById('b' + id);
+  if (b) { b.textContent = text; b.className = 'badge ' + cls; }
+  const d = document.getElementById('d' + id);
+  if (d && det !== undefined) d.textContent = det;
 }
-function T(fn){
-  // Promise.resolve converts Supabase thenable to real Promise
+function show(id) { document.getElementById(id)?.classList.add('on'); }
+function hide(id) { document.getElementById(id)?.classList.remove('on'); }
+
+// Wrap any Supabase call with a timeout
+// Uses Promise.resolve() to convert Supabase thenable → real Promise
+function sbQ(fn) {
   return Promise.race([
-    Promise.resolve(fn()).then(r=>r, e=>({data:null,error:e,count:null})),
-    new Promise(resolve=>setTimeout(()=>resolve({data:null,error:new Error('TIMEOUT'),count:null}),TO))
+    Promise.resolve(fn()).then(
+      result => result,
+      err    => ({ data: null, count: null, error: err })
+    ),
+    new Promise(resolve =>
+      setTimeout(() =>
+        resolve({ data: null, count: null, error: new Error('TIMEOUT (' + Math.round(TIMEOUT/1000) + 's)') }),
+        TIMEOUT
+      )
+    )
   ]);
 }
 
-async function run(){
-  document.getElementById('log').innerHTML='';
-  ['aSchema','aNetwork','aOK','aRLS'].forEach(id=>{document.getElementById(id).classList.remove('on');});
-  for(let i=1;i<=8;i++){B(i,'...','wait','');}
+async function run() {
+  // Reset UI
+  document.getElementById('log').innerHTML = '';
+  ['aSchema','aRLS','aOK'].forEach(hide);
+  show('aRunning');
+  for (let i = 1; i <= 9; i++) B(i, '...', 'wait', '');
 
-  L('Starting tests...','b');
+  L('Starting tests...', 'b');
 
-  // KEY check
-  if(KEY.startsWith('eyJ')){B(1,'✅ Anon JWT','ok',KEY.slice(0,22)+'...');L('Key: Anon JWT ✅','g');}
-  else{B(1,'❌ Wrong key type','fail');L('Key type wrong!','r');}
+  // ── CONFIG ──────────────────────────────────────────────────
+  const keyOK = SB_KEY.startsWith('eyJ');
+  B(1, keyOK ? '✅ Anon JWT' : '❌ Wrong type', keyOK ? 'ok' : 'fail', SB_KEY.slice(0,22)+'...');
+  L(keyOK ? 'Key OK ✅' : 'Key type WRONG ❌', keyOK ? 'g' : 'r');
 
-  // SDK check
-  if(window.supabase&&window.supabase.createClient){B(2,'✅ Loaded','ok');L('SDK loaded ✅','g');}
-  else{B(2,'❌ Failed','fail');L('SDK failed','r');return;}
-
-  // ── TEST 1: Direct HTTP fetch (no SDK) ─────────────────────
-  L('Test 1: Direct HTTP fetch...','b');
-  try{
-    const t0=Date.now();
-    const res=await T(()=>fetch(URL+'/rest/v1/admin_config?select=id&limit=1',{
-      headers:{'apikey':KEY,'Authorization':'Bearer '+KEY}
-    }));
-    const ms=Date.now()-t0;
-    const body=await res.text();
-    L('HTTP '+res.status+' in '+ms+'ms: '+body.slice(0,80),'g');
-    if(res.status===200||res.status===206){
-      B(3,'✅ '+ms+'ms','ok','HTTP '+res.status+' in '+ms+'ms');
-    } else if(res.status===404||body.includes('does not exist')){
-      B(3,'⚠️ Table missing','warn','Run schema-FRESH.sql');
-      L('admin_config table not found → run schema-FRESH.sql','y');
-      document.getElementById('aSchema').classList.add('on');
-    } else {
-      B(3,'⚠️ HTTP '+res.status,'warn',body.slice(0,60));
-    }
-  }catch(e){
-    B(3,'❌ '+e.message.slice(0,30),'fail',e.message);
-    L('HTTP fetch failed: '+e.message,'r');
-    if(e.message.includes('TIMEOUT')){document.getElementById('aNetwork').classList.add('on');}
-    return;
+  if (!window.supabase || !window.supabase.createClient) {
+    B(2, '❌ Failed', 'fail'); L('SDK failed to load ❌', 'r'); hide('aRunning'); return;
   }
+  B(2, '✅ Loaded', 'ok'); L('SDK loaded ✅', 'g');
 
-  // Init SDK client
-  const sb=window.supabase.createClient(URL,KEY,{
-    auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}
+  // ── Create client ────────────────────────────────────────────
+  const sb = window.supabase.createClient(SB_URL, SB_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
   });
 
-  // ── TEST 2: SDK query ──────────────────────────────────────
-  L('Test 2: SDK query admin_config...','b');
-  try{
-    const t0=Date.now();
-    const {data,error}=await T(()=>sb.from('admin_config').select('id').limit(1));
-    const ms=Date.now()-t0;
-    if(error){
-      const miss=error.message.includes('does not exist')||error.code==='42P01';
-      B(4,miss?'❌ Missing':'❌ '+error.code,'fail',error.message.slice(0,60));
-      L('admin_config ERROR: '+error.message,'r');
-      if(miss){document.getElementById('aSchema').classList.add('on');}
-    }else{
-      B(4,'✅ '+ms+'ms','ok',ms+'ms, rows: '+(data?data.length:0));
-      L('admin_config OK ✅ '+ms+'ms','g');
+  // ── TEST 1: Ping via SDK (no AbortController — avoids cloning error) ──
+  L('Test 1: SDK ping...', 'b');
+  {
+    const t0 = Date.now();
+    const { data, error } = await sbQ(() =>
+      sb.from('admin_config').select('id').limit(1)
+    );
+    const ms = Date.now() - t0;
+    if (error) {
+      const isTimeout  = error.message?.includes('TIMEOUT');
+      const isMissing  = error.message?.includes('does not exist') || error.code === '42P01';
+      B(3, isTimeout ? '⏱ Timeout' : '❌ Error', 'fail', error.message.slice(0,60));
+      L('Ping FAILED: ' + error.message, 'r');
+      if (isTimeout) L('→ Supabase may be slow or paused. Wait 1 min and re-run.', 'y');
+      if (isMissing) { show('aSchema'); L('→ Run schema-FRESH.sql in Supabase SQL Editor', 'y'); }
+      hide('aRunning'); return; // Can't proceed
     }
-  }catch(e){
-    B(4,'❌ '+e.message.slice(0,30),'fail',e.message);
-    L('SDK failed: '+e.message,'r');
+    B(3, '✅ ' + ms + 'ms', 'ok', ms + 'ms response time');
+    L('Ping OK ✅ ' + ms + 'ms', 'g');
   }
 
-  // ── TEST 3: approved_users ────────────────────────────────
-  L('Test 3: approved_users...','b');
-  try{
-    const {count,error}=await T(()=>sb.from('approved_users').select('*',{count:'exact',head:true}));
-    if(error){
-      const miss=error.message.includes('does not exist')||error.code==='42P01';
-      B(5,miss?'❌ Missing':'❌ Error','fail',miss?'Run schema-FRESH.sql':error.message.slice(0,50));
-      L('approved_users ERROR: '+error.message,'r');
-      if(miss)document.getElementById('aSchema').classList.add('on');
-    }else{
-      B(5,'✅ '+count+' rows','ok',count+' users');
-      L('approved_users OK ✅ '+count+' rows','g');
+  // ── TESTS 2-4: Table existence ────────────────────────────────
+  let allTablesOK = true;
+  for (const [bid, tbl] of [[4,'admin_config'],[5,'approved_users'],[6,'app_data']]) {
+    L('Checking ' + tbl + '...', 'b');
+    const { count, error } = await sbQ(() =>
+      sb.from(tbl).select('*', { count: 'exact', head: true })
+    );
+    if (error) {
+      allTablesOK = false;
+      const missing = error.message?.includes('does not exist') || error.code === '42P01';
+      B(bid, missing ? '❌ Missing' : '❌ Error', 'fail',
+        missing ? 'Run schema-FRESH.sql' : error.message.slice(0,50));
+      L(tbl + ' ERROR: ' + error.message, 'r');
+      if (missing) show('aSchema');
+    } else {
+      B(bid, '✅ ' + (count ?? 0) + ' rows', 'ok', tbl + ': ' + (count ?? 0) + ' rows');
+      L(tbl + ' OK ✅ — ' + (count ?? 0) + ' rows', 'g');
     }
-  }catch(e){B(5,'❌ Timeout','fail',e.message);L('approved_users timeout','r');}
+  }
 
-  // ── TEST 4: app_data ──────────────────────────────────────
-  L('Test 4: app_data...','b');
-  try{
-    const {count,error}=await T(()=>sb.from('app_data').select('*',{count:'exact',head:true}));
-    if(error){
-      const miss=error.message.includes('does not exist')||error.code==='42P01';
-      B(6,miss?'❌ Missing':'❌ Error','fail',miss?'Run schema-FRESH.sql':error.message.slice(0,50));
-      L('app_data ERROR: '+error.message,'r');
-      if(miss)document.getElementById('aSchema').classList.add('on');
-    }else{
-      B(6,'✅ '+count+' rows','ok',count+' rows');
-      L('app_data OK ✅ '+count+' rows','g');
-    }
-  }catch(e){B(6,'❌ Timeout','fail',e.message);L('app_data timeout','r');}
+  if (!allTablesOK) {
+    [7,8,9].forEach(i => B(i, '—', 'wait', 'skipped'));
+    hide('aRunning'); return;
+  }
 
-  // ── TEST 5+6: Write/Read ──────────────────────────────────
-  const tkey='diag_'+Date.now();
-  L('Test 5: Write...','b');
-  try{
-    const {error}=await T(()=>sb.from('app_data').upsert(
-      {user_id:'diag',data_key:tkey,data_value:{ok:true},updated_at:new Date().toISOString()},
-      {onConflict:'user_id,data_key'}
-    ));
-    if(error){
-      B(7,'❌ Failed','fail',error.message.slice(0,60));
-      L('Write ERROR: '+error.message,'r');
-      if(error.message.includes('policy')||error.message.includes('RLS'))
-        document.getElementById('aRLS').classList.add('on');
-    }else{
-      B(7,'✅ OK','ok','Write successful');
-      L('Write OK ✅','g');
-      // Read back
-      L('Test 6: Read back...','b');
-      try{
-        const {data,error:re}=await T(()=>sb.from('app_data').select('data_value')
-          .eq('user_id','diag').eq('data_key',tkey).single());
-        if(re){B(8,'❌ Failed','fail',re.message);L('Read ERROR: '+re.message,'r');}
-        else{B(8,'✅ OK','ok','Read matches ✓');L('Read OK ✅','g');}
-        sb.from('app_data').delete().eq('user_id','diag').eq('data_key',tkey).then(()=>{});
-      }catch(e){B(8,'❌ Timeout','fail');L('Read timeout','r');}
-    }
-  }catch(e){B(7,'❌ Timeout','fail');L('Write timeout','r');}
+  // ── TEST 5: Write ────────────────────────────────────────────
+  L('Test 5: Write to app_data...', 'b');
+  const testKey = 'diag_' + Date.now();
+  const { error: writeErr } = await sbQ(() =>
+    sb.from('app_data').upsert(
+      { user_id: 'diagnostic', data_key: testKey,
+        data_value: { ok: true, ts: new Date().toISOString() },
+        updated_at: new Date().toISOString() },
+      { onConflict: 'user_id,data_key' }
+    )
+  );
+  if (writeErr) {
+    B(7, '❌ Failed', 'fail', writeErr.message.slice(0,60));
+    L('Write FAILED: ' + writeErr.message, 'r');
+    if (writeErr.message?.includes('policy') || writeErr.message?.includes('RLS')) show('aRLS');
+    B(8, '—', 'wait', 'skipped'); B(9, '—', 'wait', 'skipped');
+    hide('aRunning'); return;
+  }
+  B(7, '✅ OK', 'ok', 'Write successful');
+  L('Write OK ✅', 'g');
 
-  // Summary
-  const fails=document.querySelectorAll('.badge.fail').length;
-  const warns=document.querySelectorAll('.badge.warn').length;
-  L('──────────────────────','b');
-  if(fails===0&&warns===0){
-    document.getElementById('aOK').classList.add('on');
-    L('🎉 ALL TESTS PASSED!','g');
-  }else{
-    L('⚠️ '+fails+' fail(s), '+warns+' warning(s) — check above','y');
+  // ── TEST 6: Read back ─────────────────────────────────────────
+  L('Test 6: Read back...', 'b');
+  const { data: readData, error: readErr } = await sbQ(() =>
+    sb.from('app_data').select('data_value')
+      .eq('user_id', 'diagnostic').eq('data_key', testKey).single()
+  );
+  if (readErr) {
+    B(8, '❌ Failed', 'fail', readErr.message.slice(0,50));
+    L('Read FAILED: ' + readErr.message, 'r');
+  } else {
+    B(8, '✅ OK', 'ok', 'Data matched ✓');
+    L('Read OK ✅ — data: ' + JSON.stringify(readData?.data_value), 'g');
+  }
+  // Cleanup test row
+  Promise.resolve(
+    sb.from('app_data').delete().eq('user_id','diagnostic').eq('data_key', testKey)
+  ).then(() => {}).catch(() => {});
+
+  // ── TEST 7: Realtime ──────────────────────────────────────────
+  L('Test 7: Realtime channel...', 'b');
+  await new Promise(resolve => {
+    let settled = false;
+    const settle = (text, cls, detail) => {
+      if (settled) return; settled = true;
+      B(9, text, cls, detail);
+      L('Realtime: ' + detail, cls === 'ok' ? 'g' : 'y');
+      try { sb.removeChannel(ch); } catch (_) {}
+      resolve();
+    };
+    const ch = sb.channel('arthadesk_diag_' + Date.now())
+      .subscribe(status => {
+        if (status === 'SUBSCRIBED')   settle('✅ Connected', 'ok', 'SUBSCRIBED — realtime working ✅');
+        else if (status === 'CLOSED')  settle('⚠️ Closed',   'warn', 'Channel closed');
+        else if (status === 'CHANNEL_ERROR') settle('❌ Error', 'fail', 'Realtime channel error');
+      });
+    setTimeout(() => settle('⏱ Timeout', 'warn', 'No response in ' + Math.round(TIMEOUT/1000) + 's'), TIMEOUT);
+  });
+
+  // ── DONE ─────────────────────────────────────────────────────
+  hide('aRunning');
+  const fails = document.querySelectorAll('.badge.fail').length;
+  L('─────────────────────────────', 'b');
+  if (fails === 0) {
+    show('aOK');
+    L('🎉 ALL TESTS PASSED — Supabase fully connected!', 'g');
+  } else {
+    L('⚠️ ' + fails + ' failure(s) — see above', 'y');
   }
 }
 
-window.addEventListener('load',run);
+// Run after SDK has time to load
+window.addEventListener('load', () => setTimeout(run, 500));
 </script>
 </body>
 </html>

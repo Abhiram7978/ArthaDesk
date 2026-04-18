@@ -709,7 +709,15 @@ select.form-control option{background:var(--surface)}
         if (p.eventType === 'DELETE') { try { _realLS.removeItem(k); } catch(_) {} }
         else { try { _realLS.setItem(k, JSON.stringify(p.new.data_value)); } catch(_) {} }
         _writing = false;
-        if (window._activeCompanyKey === k) _reloadUI();
+        // Reload UI for company-data or company-list changes
+        if (k === 'arthadesk_companies') {
+          // Company list changed — refresh list screen
+          const latest = window.blLoad('arthadesk_companies', []);
+          if (Array.isArray(latest)) window.registeredCompanies = latest;
+          if (!window._adAppActive) { try { renderCompanyCards(); } catch(_) {} }
+        } else if (k && (k.startsWith('arthadesk_company_') || k === window._activeCompanyKey)) {
+          _reloadUI();
+        }
         _pulse();
       })
       .subscribe(status => { console.log('[v7] RT:', status); _dot(status === 'SUBSCRIBED'); });
@@ -717,12 +725,20 @@ select.form-control option{background:var(--surface)}
 
   function _reloadUI() {
     try {
+      // Reload active company state into memory first
       if (window._activeCompanyKey && typeof loadCompanyState === 'function') {
         const c = (window.registeredCompanies||[]).find(x =>
           typeof companyKey==='function' && companyKey(x.name)===window._activeCompanyKey);
         if (c) loadCompanyState(c.name);
       }
-      ['renderDashboard','renderAllMasters','rebuildInvoiceListUI','rebuildPurchaseListUI'].forEach(f => {
+      // Refresh ALL UI components that show company data
+      const renders = [
+        'renderDashboard','updateDashInfoBar','renderAllMasters',
+        'rebuildInvoiceListUI','rebuildPurchaseListUI',
+        'rebuildReceiptListUI','rebuildPaymentListUI',
+        'renderLedgers','renderGSTR1Page','updateDashboardStats'
+      ];
+      renders.forEach(f => {
         if (typeof window[f] === 'function') try { window[f](); } catch(_) {}
       });
     } catch(_) {}
