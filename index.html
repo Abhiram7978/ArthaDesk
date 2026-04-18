@@ -17,7 +17,7 @@
 <link rel="apple-touch-icon" sizes="192x192" href="icons/icon-192.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png">
-<title>ArthaDesk — GST Ready Accounting</title>
+<title>ArthaDesk v7.1</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -8038,10 +8038,10 @@ function showScreen(id) {
   var screens = ['loginScreen','registerScreen','companyListScreen','createCompanyScreen','forgotScreen'];
   screens.forEach(function(s) {
     var el = document.getElementById(s);
-    if (el) el.classList.add('hidden');
+    if (el) { el.classList.add('hidden'); el.style.display = 'none'; }
   });
   var target = document.getElementById(id);
-  if (target) target.classList.remove('hidden');
+  if (target) { target.classList.remove('hidden'); target.style.display = ''; }
 }
 function showLogin() { showScreen('loginScreen'); }
 function showRegister() { if(typeof showToast==='function') showToast('❌ Self-registration is disabled. Contact admin.','danger'); }
@@ -8156,10 +8156,8 @@ function checkStrength(pwd) {
 // ================== SELECT COMPANY ==================
 function selectCompany(name, gstin, city) {
   console.log('[ArthaDesk] selectCompany called:', name);
-  // Mark app as active immediately
-  window._adAppActive = true;
-  window._sbSessionHandled = true;
-  if (typeof _sessionHandled !== 'undefined') _sessionHandled = true;
+  // Mark app as active immediately - FIRST THING BEFORE ANYTHING ELSE
+  window._adAppActive      = true;
   window._sbSessionHandled = true;
   if (typeof _sessionHandled !== 'undefined') _sessionHandled = true;
   // Store active company GSTIN for intra/inter detection
@@ -8181,9 +8179,11 @@ function selectCompany(name, gstin, city) {
   var compGstinEl = document.getElementById('company-gstin');
   if (compGstinEl && !compGstinEl.value) compGstinEl.value = gstin || '';
 
-  // Hide all auth screens
-  var screens = document.querySelectorAll('.auth-screen');
-  screens.forEach(function(s) { s.classList.add('hidden'); });
+  // Hide ALL auth screens (including loginScreen, companyListScreen)
+  document.querySelectorAll('.auth-screen').forEach(function(s) {
+    s.classList.add('hidden');
+    s.style.display = 'none'; // force hide with inline style too
+  });
 
   // Navigate to dashboard
   navigate('dashboard');
