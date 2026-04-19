@@ -787,18 +787,16 @@ select.form-control option{background:var(--surface)}
       _startRT(user.id);
       _dot(false);
 
-      // Pull fresh data FIRST, then open company with correct data
+      // Open company IMMEDIATELY so user sees dashboard right away
+      _autoOpenOrList();
+
+      // Pull fresh data in background and refresh UI silently
       _pull(user.id).then(had=>{
         if(!had)_push(user.id);
-        // Update company list from Supabase
         const latest=window.blLoad('arthadesk_companies',[]);
         if(Array.isArray(latest)&&latest.length) window.registeredCompanies=latest;
-        // NOW open the company — data is ready
-        _autoOpenOrList();
-      }).catch(e=>{
-        console.warn('[AD v8] pull failed, opening anyway:', e.message);
-        _autoOpenOrList(); // open with cached data on error
-      });
+        if(window._adAppActive) _refreshUI(); // silent update
+      }).catch(e=>console.warn('[AD v8] bg pull:',e.message));
 
     }catch(err){
       if(btn){btn.textContent=btn._orig||'Sign In';btn.disabled=false;}
@@ -847,10 +845,10 @@ select.form-control option{background:var(--surface)}
     // Wait for Supabase SDK
     let w=0; while(!_ready&&w<5000){await new Promise(r=>setTimeout(r,50));w+=50;}
 
-    // If Supabase unavailable — open from cache data only
+    // If Supabase unavailable — open from cache immediately
     if(!_sb){
       _autoOpenOrList();
-      return;
+      return; // skip verification, trust localStorage
     }
 
     try{
@@ -876,16 +874,15 @@ select.form-control option{background:var(--surface)}
         _startRT(user.id);
       }
 
-      // Pull fresh data, THEN open company — single execution path
+      // Open company immediately from cache, pull fresh data silently
+      _autoOpenOrList();
+
       _pull(_uid).then(had=>{
         if(!had)_push(_uid);
         const latest=window.blLoad('arthadesk_companies',[]);
         if(Array.isArray(latest)&&latest.length)window.registeredCompanies=latest;
-        _autoOpenOrList(); // open company only after data is ready
-      }).catch(e=>{
-        console.warn('[AD v8] restore pull failed, opening with cache:', e.message);
-        _autoOpenOrList();
-      });
+        if(window._adAppActive) _refreshUI(); // silent background update
+      }).catch(e=>console.warn('[AD v8] restore pull:', e.message));
 
     }catch(e){
       console.error('[AD v8] session restore error:',e.message);
