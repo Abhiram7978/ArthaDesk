@@ -559,6 +559,7 @@ select.form-control option{background:var(--surface)}
   // ── State ───────────────────────────────────────────────────
   let _sb=null, _uid=null, _rtCh=null, _writing=false, _ready=false;
   let _sessionHandled = false;
+  let _autoOpenCalled = false;  // guard: open company only once
   const TO = 10000; // 10s timeout
 
   // ── Keys ────────────────────────────────────────────────────
@@ -714,7 +715,10 @@ select.form-control option{background:var(--surface)}
   // If only 1 company → go straight to dashboard
   // If 2+ companies → show selection screen
   // Always auto-open first company — no selection screen
+  // Guard prevents double-open across login and session restore paths
   function _autoOpenOrList(){
+    if(_autoOpenCalled){ console.log('[AD v8] auto-open already done, skip'); return; }
+    _autoOpenCalled = true;
     const cos = window.registeredCompanies || [];
     if(!cos.length){
       if(typeof showToast==='function') showToast('⚠️ No companies assigned. Contact admin.','danger');
@@ -724,7 +728,7 @@ select.form-control option{background:var(--surface)}
     console.log('[AD v8] Auto-opening:', co.name);
     setTimeout(function(){
       try{ selectCompany(co.name, co.gstin||'', co.city||''); }
-      catch(e){ console.error('[AD v8] auto-open error:', e.message); }
+      catch(e){ console.error('[AD v8] auto-open error:', e.message); _autoOpenCalled=false; }
     }, 80);
   }
 
@@ -783,16 +787,18 @@ select.form-control option{background:var(--surface)}
       _startRT(user.id);
       _dot(false);
 
-      // ── Go straight to dashboard (or show list if multiple companies) ──
-      _autoOpenOrList();
-
-      // Pull data in background
+      // Pull fresh data FIRST, then open company with correct data
       _pull(user.id).then(had=>{
         if(!had)_push(user.id);
+        // Update company list from Supabase
         const latest=window.blLoad('arthadesk_companies',[]);
-        if(Array.isArray(latest)&&latest.length)window.registeredCompanies=latest;
-        if(window._adAppActive)_refreshUI();
-      }).catch(e=>console.warn('[AD v8] bg pull:',e.message));
+        if(Array.isArray(latest)&&latest.length) window.registeredCompanies=latest;
+        // NOW open the company — data is ready
+        _autoOpenOrList();
+      }).catch(e=>{
+        console.warn('[AD v8] pull failed, opening anyway:', e.message);
+        _autoOpenOrList(); // open with cached data on error
+      });
 
     }catch(err){
       if(btn){btn.textContent=btn._orig||'Sign In';btn.disabled=false;}
@@ -805,6 +811,8 @@ select.form-control option{background:var(--surface)}
     if(_rtCh&&_sb){try{_sb.removeChannel(_rtCh);}catch(_){}_rtCh=null;}
     _uid=null;window._approvedUserId=null;window.currentUser=null;
     window.registeredCompanies=[];window._adAppActive=false;
+    _autoOpenCalled=false; // reset guard so next login can open company
+    _sessionHandled=false;
     _writing=true;_realLS.clear();_writing=false;
     if(typeof showLogin==='function')showLogin();
     if(typeof showToast==='function')showToast('Signed out.','success');
@@ -829,30 +837,30 @@ select.form-control option{background:var(--surface)}
     try{savedUser=JSON.parse(_realLS.getItem('arthadesk_active_user'));}catch(_){}
     if(!savedUser?.email)return;
 
-    // Restore state immediately from cache (no waiting)
+    // Restore user identity from cache (no navigation yet)
     _uid=savedUser.id;
     window._approvedUserId=savedUser.id;
     window.currentUser=savedUser;
     const cached=window.blLoad('arthadesk_companies',[]);
     window.registeredCompanies=Array.isArray(cached)&&cached.length?cached:[];
 
-    // ── AUTO-OPEN immediately from cache ──
-    // Don't wait for Supabase — open the company RIGHT NOW
-    if(window.registeredCompanies.length){
+    // Wait for Supabase SDK
+    let w=0; while(!_ready&&w<5000){await new Promise(r=>setTimeout(r,50));w+=50;}
+
+    // If Supabase unavailable — open from cache data only
+    if(!_sb){
       _autoOpenOrList();
+      return;
     }
 
-    // Wait for Supabase in background
-    let w=0; while(!_ready&&w<5000){await new Promise(r=>setTimeout(r,50));w+=50;}
-    if(!_sb)return;
-
     try{
+      // Verify session is still valid
       const {data:rows,error}=await sbCall(()=>
         _sb.from('approved_users').select('*').eq('email',savedUser.email).eq('is_active',true).limit(1)
       );
 
-      // If session was revoked, log out
       if(!error&&!rows?.length){
+        // Session revoked
         _realLS.removeItem('arthadesk_active_user');
         window.doLogout();
         if(typeof showToast==='function')showToast('Session expired. Please log in again.','danger');
@@ -868,15 +876,21 @@ select.form-control option{background:var(--surface)}
         _startRT(user.id);
       }
 
-      // Pull fresh data silently — just update what's already on screen
+      // Pull fresh data, THEN open company — single execution path
       _pull(_uid).then(had=>{
         if(!had)_push(_uid);
         const latest=window.blLoad('arthadesk_companies',[]);
         if(Array.isArray(latest)&&latest.length)window.registeredCompanies=latest;
-        if(window._adAppActive)_refreshUI();
-      }).catch(e=>console.warn('[AD v8] restore pull:',e.message));
+        _autoOpenOrList(); // open company only after data is ready
+      }).catch(e=>{
+        console.warn('[AD v8] restore pull failed, opening with cache:', e.message);
+        _autoOpenOrList();
+      });
 
-    }catch(e){console.error('[AD v8] session restore error:',e.message);}
+    }catch(e){
+      console.error('[AD v8] session restore error:',e.message);
+      _autoOpenOrList(); // fallback open on error
+    }
   });
 
   console.log('[ArthaDesk v8] Layer loaded ✅');
