@@ -742,6 +742,10 @@ select.form-control option{background:var(--surface)}
   }
 
   async function _doLogin(){
+    // Reset all state flags so every login attempt starts clean
+    _autoOpenCalled = false;
+    _sessionHandled = false;
+
     const email=(document.getElementById('loginEmail')?.value||'').trim().toLowerCase();
     const pwd=(document.getElementById('loginPassword')?.value||'');
     const errEl=document.getElementById('loginError');
