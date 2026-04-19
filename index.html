@@ -547,354 +547,385 @@ select.form-control option{background:var(--surface)}
   window.ARTHADESK_CONFIG  = { appName:'ArthaDesk', version:'3.9', localCache:true, syncInterval:30000 };
   </script>
 <script>
-/* ArthaDesk Sync Layer v8 — Auto-select company, no stuck screens */
+/* ArthaDesk Supabase Layer — Simple, Reliable */
 (function() {
   'use strict';
 
-  // ── Clear old SW caches ─────────────────────────────────────
+  // Clear old SW caches
   if ('serviceWorker' in navigator && 'caches' in window) {
-    caches.keys().then(ks => ks.forEach(k => { if(k!=='arthadesk-v4') caches.delete(k); })).catch(()=>{});
+    caches.keys().then(ks => ks.forEach(k => {
+      if (k !== 'arthadesk-v4') caches.delete(k);
+    })).catch(() => {});
   }
 
-  // ── State ───────────────────────────────────────────────────
-  let _sb=null, _uid=null, _rtCh=null, _writing=false, _ready=false;
-  let _sessionHandled = false;
-  let _autoOpenCalled = false;  // guard: open company only once
-  const TO = 10000; // 10s timeout
+  // ── State ──────────────────────────────────────────────────
+  var _sb      = null;
+  var _uid     = null;
+  var _rtCh    = null;
+  var _writing = false;
+  var _ready   = false;
+  var TO       = 10000; // 10s Supabase timeout
 
-  // ── Keys ────────────────────────────────────────────────────
-  function isAppKey(k){ return k && (k.startsWith('arthadesk_')||k.startsWith('ade_')); }
-
-  // ── sbCall: timeout wrapper for Supabase ───────────────────
-  function sbCall(fn){
+  // ── Timeout wrapper ────────────────────────────────────────
+  function sbQ(fn) {
     return Promise.race([
-      Promise.resolve(fn()).then(r=>r, e=>({data:null,count:null,error:e})),
-      new Promise(res=>setTimeout(()=>res({data:null,count:null,error:new Error('TIMEOUT')}),TO))
+      Promise.resolve(fn()).then(function(r){return r;}, function(e){return {data:null,count:null,error:e};}),
+      new Promise(function(res){ setTimeout(function(){ res({data:null,count:null,error:new Error('TIMEOUT')}); }, TO); })
     ]);
   }
 
-  // ── Init Supabase client ───────────────────────────────────
-  function _initSB(){
-    if(!window.SUPABASE_URL||window.SUPABASE_URL.includes('YOUR_PROJECT'))return;
-    if(!window.supabase||!window.supabase.createClient)return;
-    try{
-      _sb=window.supabase.createClient(window.SUPABASE_URL,window.SUPABASE_ANON_KEY,{
-        auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false},
-        realtime:{params:{eventsPerSecond:10}}
+  // ── Init Supabase ──────────────────────────────────────────
+  function _initSB() {
+    if (!window.SUPABASE_URL || window.SUPABASE_URL.includes('YOUR_PROJECT')) return;
+    if (!window.supabase || !window.supabase.createClient) return;
+    try {
+      _sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+        realtime: { params: { eventsPerSecond: 10 } }
       });
-      window._supabaseClient=_sb; _ready=true;
-      console.log('[AD v8] Supabase ready ✅');
-    }catch(e){console.error('[AD v8] init failed:',e.message);}
+      window._supabaseClient = _sb;
+      _ready = true;
+      console.log('[AD] Supabase ready');
+    } catch(e) { console.error('[AD] Supabase init failed:', e.message); }
   }
-  if(window.supabase&&window.supabase.createClient) _initSB();
-  else { const t=setInterval(()=>{if(window.supabase&&window.supabase.createClient){clearInterval(t);_initSB();}},50); }
+  if (window.supabase && window.supabase.createClient) {
+    _initSB();
+  } else {
+    var _t = setInterval(function() {
+      if (window.supabase && window.supabase.createClient) { clearInterval(_t); _initSB(); }
+    }, 50);
+  }
 
-  // ── localStorage proxy ──────────────────────────────────────
-  const _realLS = window.localStorage;
-  try{
-    Object.defineProperty(window,'localStorage',{
-      get:()=>({
-        getItem:k=>_realLS.getItem(k),
-        setItem:(k,v)=>{ _realLS.setItem(k,v); if(isAppKey(k)&&_uid&&!_writing) _sbSave(k,v); },
-        removeItem:k=>{ _realLS.removeItem(k); if(isAppKey(k)&&_uid&&!_writing) _sbDel(k); },
-        clear:()=>_realLS.clear(),
-        key:n=>_realLS.key(n),
-        get length(){ return _realLS.length; }
-      }),
-      configurable:true
+  // ── localStorage proxy ─────────────────────────────────────
+  var _realLS = window.localStorage;
+  function _isAppKey(k) { return k && (k.startsWith('arthadesk_') || k.startsWith('ade_')); }
+  try {
+    Object.defineProperty(window, 'localStorage', {
+      get: function() {
+        return {
+          getItem:    function(k)    { return _realLS.getItem(k); },
+          setItem:    function(k, v) { _realLS.setItem(k, v); if (_isAppKey(k) && _uid && !_writing) _sbSave(k, v); },
+          removeItem: function(k)    { _realLS.removeItem(k); if (_isAppKey(k) && _uid && !_writing) _sbDel(k); },
+          clear:      function()     { _realLS.clear(); },
+          key:        function(n)    { return _realLS.key(n); },
+          get length()               { return _realLS.length; }
+        };
+      },
+      configurable: true
     });
-    console.log('[AD v8] localStorage proxy ✅');
-  }catch(e){console.warn('[AD v8] proxy failed:',e.message);}
+    console.log('[AD] localStorage proxy active');
+  } catch(e) { console.warn('[AD] proxy failed:', e.message); }
 
-  // ── Supabase write/delete ───────────────────────────────────
-  function _sbSave(key,raw){
-    if(!_sb||!_uid)return;
-    let val; try{val=JSON.parse(raw);}catch(_){val=raw;}
-    sbCall(()=>_sb.from('app_data').upsert(
-      {user_id:_uid,data_key:key,data_value:val,updated_at:new Date().toISOString()},
-      {onConflict:'user_id,data_key'}
-    )).then(({error})=>{ if(error&&error.message!=='TIMEOUT') console.warn('[AD v8] save:',key,error.message); });
+  // ── Supabase writes ────────────────────────────────────────
+  function _sbSave(key, raw) {
+    if (!_sb || !_uid) return;
+    var val; try { val = JSON.parse(raw); } catch(_) { val = raw; }
+    sbQ(function() {
+      return _sb.from('app_data').upsert(
+        { user_id: _uid, data_key: key, data_value: val, updated_at: new Date().toISOString() },
+        { onConflict: 'user_id,data_key' }
+      );
+    }).then(function(r) { if (r.error && r.error.message !== 'TIMEOUT') console.warn('[AD] save error:', key, r.error.message); });
   }
-  function _sbDel(key){
-    if(!_sb||!_uid)return;
-    sbCall(()=>_sb.from('app_data').delete().match({user_id:_uid,data_key:key}))
-      .then(({error})=>{ if(error&&error.message!=='TIMEOUT') console.warn('[AD v8] del:',error.message); });
-  }
-
-  // ── Pull all data from Supabase into localStorage ───────────
-  async function _pull(uid){
-    if(!_sb)return false;
-    const {data,error}=await sbCall(()=>_sb.from('app_data').select('data_key,data_value').eq('user_id',uid));
-    if(error||!data||!data.length)return false;
-    _writing=true;
-    data.forEach(row=>{ try{_realLS.setItem(row.data_key,JSON.stringify(row.data_value));}catch(_){} });
-    _writing=false;
-    console.log('[AD v8] pulled',data.length,'keys ✅');
-    return true;
+  function _sbDel(key) {
+    if (!_sb || !_uid) return;
+    sbQ(function() { return _sb.from('app_data').delete().match({ user_id: _uid, data_key: key }); })
+      .then(function(r) { if (r.error && r.error.message !== 'TIMEOUT') console.warn('[AD] del error:', r.error.message); });
   }
 
-  // ── Push localStorage to Supabase ──────────────────────────
-  async function _push(uid){
-    if(!_sb)return;
-    const rows=[];
-    for(let i=0;i<_realLS.length;i++){
-      const k=_realLS.key(i); if(!isAppKey(k))continue;
-      try{rows.push({user_id:uid,data_key:k,data_value:JSON.parse(_realLS.getItem(k)),updated_at:new Date().toISOString()});}catch(_){}
+  // ── Pull from Supabase into localStorage ───────────────────
+  function _pull(uid) {
+    return sbQ(function() {
+      return _sb.from('app_data').select('data_key,data_value').eq('user_id', uid);
+    }).then(function(result) {
+      if (result.error || !result.data || !result.data.length) return false;
+      _writing = true;
+      result.data.forEach(function(row) {
+        try { _realLS.setItem(row.data_key, JSON.stringify(row.data_value)); } catch(_) {}
+      });
+      _writing = false;
+      console.log('[AD] pulled', result.data.length, 'keys');
+      return true;
+    });
+  }
+
+  // ── Push localStorage to Supabase ─────────────────────────
+  function _push(uid) {
+    if (!_sb) return Promise.resolve();
+    var rows = [];
+    for (var i = 0; i < _realLS.length; i++) {
+      var k = _realLS.key(i);
+      if (!_isAppKey(k)) continue;
+      try { rows.push({ user_id: uid, data_key: k, data_value: JSON.parse(_realLS.getItem(k)), updated_at: new Date().toISOString() }); } catch(_) {}
     }
-    if(!rows.length)return;
-    for(let i=0;i<rows.length;i+=50){
-      const {error}=await sbCall(()=>_sb.from('app_data').upsert(rows.slice(i,i+50),{onConflict:'user_id,data_key'}));
-      if(error&&error.message!=='TIMEOUT')console.warn('[AD v8] push:',error.message);
-    }
-    console.log('[AD v8] pushed',rows.length,'keys ✅');
+    if (!rows.length) return Promise.resolve();
+    var chunks = [];
+    for (var j = 0; j < rows.length; j += 50) chunks.push(rows.slice(j, j + 50));
+    return chunks.reduce(function(p, chunk) {
+      return p.then(function() {
+        return sbQ(function() { return _sb.from('app_data').upsert(chunk, { onConflict: 'user_id,data_key' }); });
+      });
+    }, Promise.resolve());
   }
 
-  // ── Realtime ────────────────────────────────────────────────
-  function _startRT(uid){
-    if(!_sb)return;
-    if(_rtCh){try{_sb.removeChannel(_rtCh);}catch(_){}_rtCh=null;}
-    _rtCh=_sb.channel('ad_'+uid)
-      .on('postgres_changes',{event:'*',schema:'public',table:'app_data',filter:'user_id=eq.'+uid},p=>{
-        if(_writing)return;
-        _writing=true;
-        const k=p.new?.data_key||p.old?.data_key;
-        if(!k){_writing=false;return;}
-        if(p.eventType==='DELETE'){try{_realLS.removeItem(k);}catch(_){}}
-        else{try{_realLS.setItem(k,JSON.stringify(p.new.data_value));}catch(_){}}
-        _writing=false;
-        if(window._adAppActive) _refreshUI();
-        _pulse();
+  // ── Realtime ───────────────────────────────────────────────
+  function _startRT(uid) {
+    if (!_sb) return;
+    if (_rtCh) { try { _sb.removeChannel(_rtCh); } catch(_) {} _rtCh = null; }
+    _rtCh = _sb.channel('ad_' + uid)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'app_data', filter: 'user_id=eq.' + uid }, function(p) {
+        if (_writing) return;
+        _writing = true;
+        var k = (p.new && p.new.data_key) || (p.old && p.old.data_key);
+        if (!k) { _writing = false; return; }
+        if (p.eventType === 'DELETE') { try { _realLS.removeItem(k); } catch(_) {} }
+        else { try { _realLS.setItem(k, JSON.stringify(p.new.data_value)); } catch(_) {} }
+        _writing = false;
+        if (window._adAppActive) _refreshUI();
+        _pulseDot();
       })
-      .subscribe(s=>{console.log('[AD v8] RT:',s); _dot(s==='SUBSCRIBED');});
+      .subscribe(function(s) { console.log('[AD] RT:', s); _setDot(s === 'SUBSCRIBED'); });
   }
 
-  function _refreshUI(){
-    try{
-      if(window._activeCompanyKey&&typeof loadCompanyState==='function'){
-        const c=(window.registeredCompanies||[]).find(x=>typeof companyKey==='function'&&companyKey(x.name)===window._activeCompanyKey);
-        if(c)loadCompanyState(c.name);
+  function _refreshUI() {
+    try {
+      if (window._activeCompanyKey && typeof loadCompanyState === 'function') {
+        var c = (window.registeredCompanies || []).find(function(x) {
+          return typeof companyKey === 'function' && companyKey(x.name) === window._activeCompanyKey;
+        });
+        if (c) loadCompanyState(c.name);
       }
       ['renderDashboard','updateDashInfoBar','renderAllMasters','updateDashboardStats',
-       'rebuildInvoiceListUI','rebuildPurchaseListUI','rebuildReceiptListUI','rebuildPaymentListUI',
-       'renderLedgers'].forEach(f=>{if(typeof window[f]==='function')try{window[f]();}catch(_){};});
-    }catch(_){}
+       'rebuildInvoiceListUI','rebuildPurchaseListUI','rebuildReceiptListUI','rebuildPaymentListUI'].forEach(function(f) {
+        if (typeof window[f] === 'function') try { window[f](); } catch(_) {}
+      });
+    } catch(_) {}
   }
 
-  function _pulse(){
-    const d=document.getElementById('_ad_dot');
-    if(!d)return;
-    d.style.transform='scale(2)';d.style.background='#00d4aa';
-    setTimeout(()=>{d.style.transform='scale(1)';d.style.background='#22c55e';},500);
-  }
-  function _dot(on){
-    let d=document.getElementById('_ad_dot');
-    if(!d&&document.body){
-      d=document.createElement('div');d.id='_ad_dot';
-      d.style.cssText='position:fixed;bottom:8px;left:8px;width:10px;height:10px;border-radius:50%;z-index:99999;transition:all .4s;pointer-events:none';
+  // ── Sync dot indicator ─────────────────────────────────────
+  function _setDot(on) {
+    var d = document.getElementById('_ad_dot');
+    if (!d && document.body) {
+      d = document.createElement('div'); d.id = '_ad_dot';
+      d.style.cssText = 'position:fixed;bottom:8px;left:8px;width:10px;height:10px;border-radius:50%;z-index:99999;transition:all .4s;pointer-events:none';
       document.body.appendChild(d);
     }
-    if(d){d.style.background=on?'#22c55e':'#f59e0b';d.style.boxShadow=on?'0 0 8px #22c55e':'0 0 8px #f59e0b';}
+    if (d) { d.style.background = on ? '#22c55e' : '#f59e0b'; d.style.boxShadow = on ? '0 0 8px #22c55e' : '0 0 8px #f59e0b'; }
+  }
+  function _pulseDot() {
+    var d = document.getElementById('_ad_dot');
+    if (!d) return;
+    d.style.transform = 'scale(2)'; d.style.background = '#00d4aa';
+    setTimeout(function() { d.style.transform = 'scale(1)'; d.style.background = '#22c55e'; }, 500);
   }
 
-  // ── Hide register ───────────────────────────────────────────
-  const st=document.createElement('style');
-  st.textContent='#registerScreen{display:none!important}.auth-footer-link{display:none!important}';
-  document.head.appendChild(st);
-  window.showRegister=()=>{if(typeof showToast==='function')showToast('Contact admin to create account','danger');};
-  window.doRegister=window.showRegister;
+  // ── Hide register screen ───────────────────────────────────
+  var _st = document.createElement('style');
+  _st.textContent = '#registerScreen{display:none!important}.auth-footer-link{display:none!important}';
+  document.head.appendChild(_st);
+  window.showRegister = function() { if (typeof showToast === 'function') showToast('Contact admin to create account', 'danger'); };
+  window.doRegister = window.showRegister;
 
-  // ── Core storage API ────────────────────────────────────────
-  window.blSave=(k,v)=>{try{_realLS.setItem(k,JSON.stringify(v));}catch(_){}};
-  window.blLoad=(k,fb)=>{try{const r=_realLS.getItem(k);return r!==null?JSON.parse(r):fb;}catch(_){return fb;}};
-  window.blRemove=k=>{try{_realLS.removeItem(k);}catch(_){}};
-  window.saveCompanyList=()=>window.blSave('arthadesk_companies',window.registeredCompanies||[]);
-  window.loadCompanyList=()=>{const l=window.blLoad('arthadesk_companies',[]);window.registeredCompanies=Array.isArray(l)?l:[];};
-  window.saveUserList=()=>{};window.loadUserList=()=>{};
+  // ── Core storage API ───────────────────────────────────────
+  window.blSave   = function(k, v)  { try { _realLS.setItem(k, JSON.stringify(v)); } catch(_) {} };
+  window.blLoad   = function(k, fb) { try { var r = _realLS.getItem(k); return r !== null ? JSON.parse(r) : fb; } catch(_) { return fb; } };
+  window.blRemove = function(k)     { try { _realLS.removeItem(k); } catch(_) {} };
+  window.saveCompanyList = function() { window.blSave('arthadesk_companies', window.registeredCompanies || []); };
+  window.loadCompanyList = function() {
+    var l = window.blLoad('arthadesk_companies', []);
+    window.registeredCompanies = Array.isArray(l) ? l : [];
+  };
+  window.saveUserList = function() {};
+  window.loadUserList = function() {};
 
-  // ── AUTO-OPEN COMPANY: the core function ───────────────────
-  // If only 1 company → go straight to dashboard
-  // If 2+ companies → show selection screen
-  // Always auto-open first company — no selection screen
-  // Guard prevents double-open across login and session restore paths
-  function _autoOpenOrList(){
-    if(_autoOpenCalled){ console.log('[AD v8] auto-open already done, skip'); return; }
-    _autoOpenCalled = true;
-    const cos = window.registeredCompanies || [];
-    if(!cos.length){
-      if(typeof showToast==='function') showToast('⚠️ No companies assigned. Contact admin.','danger');
+  // ── OPEN COMPANY — the core action ─────────────────────────
+  // Called after login OR session restore. Directly opens first company.
+  function _openCompany(companies) {
+    var cos = companies || window.registeredCompanies || [];
+    if (!cos.length) {
+      if (typeof showToast === 'function') showToast('⚠️ No companies assigned. Contact admin.', 'danger');
       return;
     }
-    const co = cos[0];
-    console.log('[AD v8] Auto-opening:', co.name);
-    setTimeout(function(){
-      try{ selectCompany(co.name, co.gstin||'', co.city||''); }
-      catch(e){ console.error('[AD v8] auto-open error:', e.message); _autoOpenCalled=false; }
-    }, 80);
-  }
-
-  // ── setErr helper ───────────────────────────────────────────
-  function _setErr(id,msg){const el=document.getElementById(id);if(!el)return;el.textContent=msg;el.classList.add('show');}
-
-  // ── doLogin ─────────────────────────────────────────────────
-  function _attachLogin(){
-    window.doLogin=_doLogin;
-    window._supabaseLoginReady=_doLogin;
-  }
-
-  async function _doLogin(){
-    // Reset all state flags so every login attempt starts clean
-    _autoOpenCalled = false;
-    _sessionHandled = false;
-
-    const email=(document.getElementById('loginEmail')?.value||'').trim().toLowerCase();
-    const pwd=(document.getElementById('loginPassword')?.value||'');
-    const errEl=document.getElementById('loginError');
-    if(errEl)errEl.classList.remove('show');
-
-    if(!email||!pwd){_setErr('loginError','❌ Enter email and password.');return;}
-
-    // Wait up to 8s for Supabase
-    if(!_sb){
-      _setErr('loginError','⏳ Connecting...');
-      let w=0; while(!_sb&&w<8000){await new Promise(r=>setTimeout(r,200));w+=200;}
-      if(!_sb){_setErr('loginError','❌ Cannot reach server. Check internet.');return;}
-      if(errEl)errEl.classList.remove('show');
-    }
-
-    const btn=document.querySelector('#loginScreen .auth-btn-primary')||document.querySelector('#loginScreen button[onclick*="doLogin"]');
-    if(btn){btn._orig=btn.textContent;btn.textContent='⏳ Verifying…';btn.disabled=true;}
-
-    try{
-      const {data:rows,error}=await sbCall(()=>_sb.from('approved_users').select('*').eq('email',email).limit(1));
-      if(btn){btn.textContent=btn._orig||'Sign In';btn.disabled=false;}
-
-      if(error?.message==='TIMEOUT'){_setErr('loginError','⏱ Server timeout. Try again.');return;}
-      if(error){_setErr('loginError','❌ Server error: '+error.message);return;}
-      if(!rows?.length){_setErr('loginError','❌ Account not found. Contact admin.');return;}
-
-      const user=rows[0];
-      if(!user.is_active){_setErr('loginError','🚫 Account blocked. Contact admin.');return;}
-      if(user.password!==pwd){_setErr('loginError','❌ Incorrect password.');return;}
-
-      // ✅ Login success
-      _uid=user.id; _sessionHandled=true;
-      window._approvedUserId=user.id;
-      window._adAppActive=false;
-      window.currentUser={id:user.id,email:user.email,name:user.full_name,isNew:false};
-      window.registeredCompanies=(user.assigned_companies||[]).map(n=>({name:n,gstin:'',city:''}));
-
-      _writing=true;
-      _realLS.setItem('arthadesk_active_user',JSON.stringify(window.currentUser));
-      _realLS.setItem('arthadesk_companies',JSON.stringify(window.registeredCompanies));
-      _writing=false;
-
-      _startRT(user.id);
-      _dot(false);
-
-      // Open company IMMEDIATELY so user sees dashboard right away
-      _autoOpenOrList();
-
-      // Pull fresh data in background and refresh UI silently
-      _pull(user.id).then(had=>{
-        if(!had)_push(user.id);
-        const latest=window.blLoad('arthadesk_companies',[]);
-        if(Array.isArray(latest)&&latest.length) window.registeredCompanies=latest;
-        if(window._adAppActive) _refreshUI(); // silent update
-      }).catch(e=>console.warn('[AD v8] bg pull:',e.message));
-
-    }catch(err){
-      if(btn){btn.textContent=btn._orig||'Sign In';btn.disabled=false;}
-      _setErr('loginError','❌ '+err.message);
+    var co = cos[0];
+    console.log('[AD] Opening company:', co.name);
+    // Hide all auth screens immediately before calling selectCompany
+    document.querySelectorAll('.auth-screen').forEach(function(s) {
+      s.classList.add('hidden');
+      s.style.display = 'none';
+    });
+    // Call selectCompany — it will navigate to dashboard
+    try {
+      selectCompany(co.name, co.gstin || '', co.city || '');
+    } catch(e) {
+      console.error('[AD] selectCompany failed:', e.message);
+      // If selectCompany not ready yet, retry once after 200ms
+      setTimeout(function() {
+        try { selectCompany(co.name, co.gstin || '', co.city || ''); } catch(e2) {
+          console.error('[AD] selectCompany retry failed:', e2.message);
+        }
+      }, 200);
     }
   }
 
-  // ── doLogout ────────────────────────────────────────────────
-  window.doLogout=function(){
-    if(_rtCh&&_sb){try{_sb.removeChannel(_rtCh);}catch(_){}_rtCh=null;}
-    _uid=null;window._approvedUserId=null;window.currentUser=null;
-    window.registeredCompanies=[];window._adAppActive=false;
-    _autoOpenCalled=false; // reset guard so next login can open company
-    _sessionHandled=false;
-    _writing=true;_realLS.clear();_writing=false;
-    if(typeof showLogin==='function')showLogin();
-    if(typeof showToast==='function')showToast('Signed out.','success');
-  };
+  // ── setErr helper ──────────────────────────────────────────
+  function _setErr(id, msg) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.add('show');
+  }
 
-  window.doForgotPwd=function(){
-    if(typeof showToast==='function')showToast('Contact admin to reset password.','success');
-    const el=document.getElementById('forgotSuccess');if(el)el.classList.add('show');
-    setTimeout(()=>{if(typeof showLogin==='function')showLogin();},2500);
-  };
+  // ── doLogin ────────────────────────────────────────────────
+  function _doLogin() {
+    var email = ((document.getElementById('loginEmail') || {}).value || '').trim().toLowerCase();
+    var pwd   = ((document.getElementById('loginPassword') || {}).value || '');
+    var errEl = document.getElementById('loginError');
+    if (errEl) errEl.classList.remove('show');
 
-  // ── Session restore on page load ────────────────────────────
-  window.addEventListener('load',async function(){
-    _attachLogin();
-    _dot(false);
+    if (!email || !pwd) { _setErr('loginError', '❌ Enter email and password.'); return; }
 
-    // Skip if already handled (manual login happened first)
-    if(_sessionHandled||window._sbSessionHandled||window._adAppActive)return;
+    // Wait for Supabase (async wrapper)
+    _ensureSB().then(function() {
+      if (!_sb) { _setErr('loginError', '❌ Cannot reach server. Check internet.'); return; }
 
-    // Check for saved session
-    let savedUser=null;
-    try{savedUser=JSON.parse(_realLS.getItem('arthadesk_active_user'));}catch(_){}
-    if(!savedUser?.email)return;
+      var btn = document.querySelector('#loginScreen .auth-btn-primary') ||
+                document.querySelector('#loginScreen button[onclick*="doLogin"]');
+      if (btn) { btn._orig = btn.textContent; btn.textContent = '⏳ Verifying…'; btn.disabled = true; }
 
-    // Restore user identity from cache (no navigation yet)
-    _uid=savedUser.id;
-    window._approvedUserId=savedUser.id;
-    window.currentUser=savedUser;
-    const cached=window.blLoad('arthadesk_companies',[]);
-    window.registeredCompanies=Array.isArray(cached)&&cached.length?cached:[];
+      sbQ(function() {
+        return _sb.from('approved_users').select('*').eq('email', email).limit(1);
+      }).then(function(result) {
+        if (btn) { btn.textContent = btn._orig || 'Sign In'; btn.disabled = false; }
 
-    // Wait for Supabase SDK
-    let w=0; while(!_ready&&w<5000){await new Promise(r=>setTimeout(r,50));w+=50;}
+        if (result.error && result.error.message === 'TIMEOUT') { _setErr('loginError', '⏱ Server timeout. Try again.'); return; }
+        if (result.error) { _setErr('loginError', '❌ Server error: ' + result.error.message); return; }
+        if (!result.data || !result.data.length) { _setErr('loginError', '❌ Account not found. Contact admin.'); return; }
 
-    // If Supabase unavailable — open from cache immediately
-    if(!_sb){
-      _autoOpenOrList();
-      return; // skip verification, trust localStorage
-    }
+        var user = result.data[0];
+        if (!user.is_active) { _setErr('loginError', '🚫 Account blocked. Contact admin.'); return; }
+        if (user.password !== pwd) { _setErr('loginError', '❌ Incorrect password.'); return; }
 
-    try{
-      // Verify session is still valid
-      const {data:rows,error}=await sbCall(()=>
-        _sb.from('approved_users').select('*').eq('email',savedUser.email).eq('is_active',true).limit(1)
-      );
+        // ✅ Login success — set up session
+        _uid = user.id;
+        window._approvedUserId = user.id;
+        window._adAppActive    = false;
+        window.currentUser     = { id: user.id, email: user.email, name: user.full_name, isNew: false };
+        window.registeredCompanies = (user.assigned_companies || []).map(function(n) { return { name: n, gstin: '', city: '' }; });
 
-      if(!error&&!rows?.length){
-        // Session revoked
-        _realLS.removeItem('arthadesk_active_user');
-        window.doLogout();
-        if(typeof showToast==='function')showToast('Session expired. Please log in again.','danger');
-        return;
-      }
+        _writing = true;
+        _realLS.setItem('arthadesk_active_user', JSON.stringify(window.currentUser));
+        _realLS.setItem('arthadesk_companies',   JSON.stringify(window.registeredCompanies));
+        _writing = false;
 
-      if(!error&&rows?.length){
-        const user=rows[0];
-        _uid=user.id; _sessionHandled=true;
-        window._approvedUserId=user.id;
-        window.currentUser={id:user.id,email:user.email,name:user.full_name,isNew:false};
-        window.registeredCompanies=(user.assigned_companies||[]).map(n=>({name:n,gstin:'',city:''}));
         _startRT(user.id);
-      }
+        _setDot(false);
 
-      // Open company immediately from cache, pull fresh data silently
-      _autoOpenOrList();
+        // Open company NOW — don't wait for Supabase pull
+        _openCompany(window.registeredCompanies);
 
-      _pull(_uid).then(had=>{
-        if(!had)_push(_uid);
-        const latest=window.blLoad('arthadesk_companies',[]);
-        if(Array.isArray(latest)&&latest.length)window.registeredCompanies=latest;
-        if(window._adAppActive) _refreshUI(); // silent background update
-      }).catch(e=>console.warn('[AD v8] restore pull:', e.message));
+        // Pull data in background, refresh UI silently
+        if (_sb) {
+          _pull(user.id).then(function(had) {
+            if (!had) _push(user.id);
+            var latest = window.blLoad('arthadesk_companies', []);
+            if (Array.isArray(latest) && latest.length) window.registeredCompanies = latest;
+            if (window._adAppActive) _refreshUI();
+          }).catch(function(e) { console.warn('[AD] bg pull error:', e.message); });
+        }
+      });
+    });
+  }
 
-    }catch(e){
-      console.error('[AD v8] session restore error:',e.message);
-      _autoOpenOrList(); // fallback open on error
-    }
+  function _ensureSB() {
+    if (_sb) return Promise.resolve();
+    return new Promise(function(resolve) {
+      var waited = 0;
+      var interval = setInterval(function() {
+        waited += 100;
+        if (_sb || waited >= 8000) { clearInterval(interval); resolve(); }
+      }, 100);
+    });
+  }
+
+  // ── doLogout ───────────────────────────────────────────────
+  window.doLogout = function() {
+    if (_rtCh && _sb) { try { _sb.removeChannel(_rtCh); } catch(_) {} _rtCh = null; }
+    _uid = null;
+    window._approvedUserId = null;
+    window.currentUser = null;
+    window.registeredCompanies = [];
+    window._adAppActive = false;
+    window._activeCompanyKey = null;
+    _writing = true; _realLS.clear(); _writing = false;
+    if (typeof showLogin === 'function') showLogin();
+    if (typeof showToast === 'function') showToast('Signed out.', 'success');
+  };
+
+  window.doForgotPwd = function() {
+    if (typeof showToast === 'function') showToast('Contact admin to reset password.', 'success');
+    var el = document.getElementById('forgotSuccess'); if (el) el.classList.add('show');
+    setTimeout(function() { if (typeof showLogin === 'function') showLogin(); }, 2500);
+  };
+
+  // ── Attach login function ──────────────────────────────────
+  function _attachLogin() {
+    window.doLogin = _doLogin;
+    window._supabaseLoginReady = _doLogin;
+  }
+
+  // ── Session restore on page load ───────────────────────────
+  window.addEventListener('load', function() {
+    _attachLogin();
+    _setDot(false);
+
+    // Read saved session
+    var savedUser = null;
+    try { savedUser = JSON.parse(_realLS.getItem('arthadesk_active_user')); } catch(_) {}
+    if (!savedUser || !savedUser.email) return; // No saved session — show login screen
+
+    // Restore from cache immediately
+    _uid = savedUser.id;
+    window._approvedUserId = savedUser.id;
+    window.currentUser = savedUser;
+    var cached = window.blLoad('arthadesk_companies', []);
+    window.registeredCompanies = Array.isArray(cached) && cached.length ? cached : [];
+
+    // Open company immediately from cache
+    _openCompany(window.registeredCompanies);
+
+    // Then verify with Supabase and refresh in background
+    _ensureSB().then(function() {
+      if (!_sb) return;
+      sbQ(function() {
+        return _sb.from('approved_users').select('*')
+          .eq('email', savedUser.email).eq('is_active', true).limit(1);
+      }).then(function(result) {
+        if (result.error) return; // timeout or network error — already opened from cache
+        if (!result.data || !result.data.length) {
+          // Session revoked
+          window.doLogout();
+          if (typeof showToast === 'function') showToast('Session expired. Please log in again.', 'danger');
+          return;
+        }
+        var user = result.data[0];
+        _uid = user.id;
+        window._approvedUserId = user.id;
+        window.currentUser = { id: user.id, email: user.email, name: user.full_name, isNew: false };
+        window.registeredCompanies = (user.assigned_companies || []).map(function(n) { return { name: n, gstin: '', city: '' }; });
+        _startRT(user.id);
+
+        // Pull fresh data, refresh UI
+        _pull(user.id).then(function(had) {
+          if (!had) _push(user.id);
+          var latest = window.blLoad('arthadesk_companies', []);
+          if (Array.isArray(latest) && latest.length) window.registeredCompanies = latest;
+          if (window._adAppActive) _refreshUI();
+        }).catch(function(e) { console.warn('[AD] restore pull:', e.message); });
+      });
+    });
   });
 
-  console.log('[ArthaDesk v8] Layer loaded ✅');
+  console.log('[ArthaDesk] Layer loaded');
 })();
 
 </script>
