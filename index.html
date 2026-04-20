@@ -669,9 +669,23 @@ select.form-control option{background:var(--surface)}
   }
 
   // ── Realtime ───────────────────────────────────────────────
+  var _pollInterval = null;
+  var _lastPollHash = '';
+
   function _startRT(uid) {
     if (!_sb) return;
     if (_rtCh) { try { _sb.removeChannel(_rtCh); } catch(_) {} _rtCh = null; }
+
+    var rtFailed = false;
+    var rtTimeout = setTimeout(function() {
+      if (!rtFailed) {
+        rtFailed = true;
+        console.warn('[AD] Realtime unavailable — switching to polling mode');
+        _setDot(false);
+        _startPolling(uid); // fallback to polling every 30s
+      }
+    }, 10000);
+
     _rtCh = _sb.channel('ad_' + uid)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'app_data', filter: 'user_id=eq.' + uid }, function(p) {
         if (_writing) return;
@@ -684,7 +698,47 @@ select.form-control option{background:var(--surface)}
         if (window._adAppActive) _refreshUI();
         _pulseDot();
       })
-      .subscribe(function(s) { console.log('[AD] RT:', s); _setDot(s === 'SUBSCRIBED'); });
+      .subscribe(function(s) {
+        console.log('[AD] RT:', s);
+        if (s === 'SUBSCRIBED') {
+          clearTimeout(rtTimeout);
+          rtFailed = false;
+          if (_pollInterval) { clearInterval(_pollInterval); _pollInterval = null; }
+          _setDot(true);
+        } else if (s === 'CHANNEL_ERROR' || s === 'TIMED_OUT' || s === 'CLOSED') {
+          if (!rtFailed) {
+            rtFailed = true;
+            clearTimeout(rtTimeout);
+            console.warn('[AD] Realtime ' + s + ' — switching to polling');
+            _setDot(false);
+            _startPolling(uid);
+          }
+        }
+      });
+  }
+
+  // Polling fallback: check Supabase every 30s for changes
+  function _startPolling(uid) {
+    if (_pollInterval) clearInterval(_pollInterval);
+    console.log('[AD] Polling mode active (30s interval)');
+    _pollInterval = setInterval(function() {
+      if (!_sb || !uid || !window._adAppActive) return;
+      sbQ(function() {
+        return _sb.from('app_data').select('data_key,data_value').eq('user_id', uid);
+      }).then(function(result) {
+        if (result.error || !result.data || !result.data.length) return;
+        var newHash = result.data.map(function(r){return r.data_key+':'+JSON.stringify(r.data_value);}).join('|');
+        if (newHash === _lastPollHash) return; // no changes
+        _lastPollHash = newHash;
+        _writing = true;
+        result.data.forEach(function(row) {
+          try { _realLS.setItem(row.data_key, JSON.stringify(row.data_value)); } catch(_) {}
+        });
+        _writing = false;
+        if (window._adAppActive) { _refreshUI(); _pulseDot(); }
+        console.log('[AD] Polling: synced updates');
+      }).catch(function() {});
+    }, 30000);
   }
 
   function _refreshUI() {
