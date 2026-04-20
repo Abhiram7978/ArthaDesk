@@ -30,10 +30,10 @@ button{display:block;width:100%;padding:13px;border-radius:8px;background:linear
 <h2>⚡ ArthaDesk DB Test</h2>
 <div class="sub">ohvuvcoszgwxdzapsazl.supabase.co</div>
 
-<div class="alert red on" id="aRunning">🔄 Running tests... please wait (up to 30s)</div>
-<div class="alert red"  id="aSchema">❌ <b>Tables missing!</b> Run <b>schema-FRESH.sql</b> in Supabase → SQL Editor.</div>
-<div class="alert amb"  id="aRLS">⚠️ <b>Write blocked.</b> Run <b>sync-fix.sql</b> in Supabase → SQL Editor.</div>
-<div class="alert grn"  id="aOK">✅ <b>All systems working! Supabase fully connected.</b></div>
+<div class="alert red on" id="aRunning">🔄 Running tests... please wait (~30s for realtime)</div>
+<div class="alert red"  id="aSchema">❌ Tables missing — run schema-FRESH.sql in Supabase SQL Editor</div>
+<div class="alert amb"  id="aRLS">⚠️ Write blocked — run realtime-fix.sql in Supabase SQL Editor</div>
+<div class="alert grn"  id="aOK">✅ All systems working! Supabase fully connected.</div>
 
 <div class="row"><div class="lbl"><div class="ti">Project URL</div><div class="de">https://ohvuvcoszgwxdzapsazl.supabase.co</div></div><div class="badge ok">✅ Set</div></div>
 <div class="row"><div class="lbl"><div class="ti">API Key</div><div class="de" id="d1"></div></div><div class="badge wait" id="b1">...</div></div>
@@ -44,195 +44,146 @@ button{display:block;width:100%;padding:13px;border-radius:8px;background:linear
 <div class="row"><div class="lbl"><div class="ti">4. app_data table</div><div class="de" id="d6"></div></div><div class="badge wait" id="b6">...</div></div>
 <div class="row"><div class="lbl"><div class="ti">5. Write to app_data</div><div class="de" id="d7"></div></div><div class="badge wait" id="b7">...</div></div>
 <div class="row"><div class="lbl"><div class="ti">6. Read back from app_data</div><div class="de" id="d8"></div></div><div class="badge wait" id="b8">...</div></div>
-<div class="row"><div class="lbl"><div class="ti">7. Realtime channel</div><div class="de" id="d9"></div></div><div class="badge wait" id="b9">...</div></div>
+<div class="row"><div class="lbl"><div class="ti">7. Realtime channel (30s)</div><div class="de" id="d9"></div></div><div class="badge wait" id="b9">...</div></div>
 
 <button onclick="run()">🔄 Re-run All Tests</button>
 <div class="log" id="log"></div>
 
-<!-- Load SDK last so page renders first -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script>
 const SB_URL = 'https://ohvuvcoszgwxdzapsazl.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9odnV2Y29zemd3eGR6YXBzYXpsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDM1NDksImV4cCI6MjA5MTQxOTU0OX0.DvcAa4ohNJtvKiJ9pVBx97d8OaMH80ScNMAmIfM4D6A';
-const TIMEOUT = 15000; // 15s — generous for Tokyo latency
+const DB_TO = 12000;   // 12s for DB queries
+const RT_TO = 30000;   // 30s for realtime (websocket needs more time)
 
-function L(msg, t) {
-  const el = document.getElementById('log');
-  const d = document.createElement('div');
-  d.className = t || 'b';
-  d.textContent = new Date().toLocaleTimeString() + '  ' + msg;
-  el.appendChild(d);
-  el.scrollTop = el.scrollHeight;
-}
-function B(id, text, cls, det) {
-  const b = document.getElementById('b' + id);
-  if (b) { b.textContent = text; b.className = 'badge ' + cls; }
-  const d = document.getElementById('d' + id);
-  if (d && det !== undefined) d.textContent = det;
-}
-function show(id) { document.getElementById(id)?.classList.add('on'); }
-function hide(id) { document.getElementById(id)?.classList.remove('on'); }
+function L(msg,t){const el=document.getElementById('log');const d=document.createElement('div');d.className=t||'b';d.textContent=new Date().toLocaleTimeString()+' '+msg;el.appendChild(d);el.scrollTop=el.scrollHeight;}
+function B(id,text,cls,det){const b=document.getElementById('b'+id);if(b){b.textContent=text;b.className='badge '+cls;}const d=document.getElementById('d'+id);if(d&&det!==undefined)d.textContent=det;}
+function show(id){document.getElementById(id)?.classList.add('on');}
+function hide(id){document.getElementById(id)?.classList.remove('on');}
 
-// Wrap any Supabase call with a timeout
-// Uses Promise.resolve() to convert Supabase thenable → real Promise
-function sbQ(fn) {
+function sbQ(fn,timeout){
+  const t=timeout||DB_TO;
   return Promise.race([
-    Promise.resolve(fn()).then(
-      result => result,
-      err    => ({ data: null, count: null, error: err })
-    ),
-    new Promise(resolve =>
-      setTimeout(() =>
-        resolve({ data: null, count: null, error: new Error('TIMEOUT (' + Math.round(TIMEOUT/1000) + 's)') }),
-        TIMEOUT
-      )
-    )
+    Promise.resolve(fn()).then(r=>r,e=>({data:null,count:null,error:e})),
+    new Promise(res=>setTimeout(()=>res({data:null,count:null,error:new Error('TIMEOUT')}),t))
   ]);
 }
 
-async function run() {
-  // Reset UI
-  document.getElementById('log').innerHTML = '';
-  ['aSchema','aRLS','aOK'].forEach(hide);
-  show('aRunning');
-  for (let i = 1; i <= 9; i++) B(i, '...', 'wait', '');
+async function run(){
+  document.getElementById('log').innerHTML='';
+  ['aSchema','aRLS','aOK'].forEach(hide); show('aRunning');
+  for(let i=1;i<=9;i++)B(i,'...','wait','');
 
-  L('Starting tests...', 'b');
+  L('Starting tests...','b');
 
-  // ── CONFIG ──────────────────────────────────────────────────
-  const keyOK = SB_KEY.startsWith('eyJ');
-  B(1, keyOK ? '✅ Anon JWT' : '❌ Wrong type', keyOK ? 'ok' : 'fail', SB_KEY.slice(0,22)+'...');
-  L(keyOK ? 'Key OK ✅' : 'Key type WRONG ❌', keyOK ? 'g' : 'r');
+  // Config
+  const keyOK=SB_KEY.startsWith('eyJ');
+  B(1,keyOK?'✅ Anon JWT':'❌ Wrong','keyOK?ok:fail',SB_KEY.slice(0,22)+'...');
+  B(1,keyOK?'✅ Anon JWT':'❌ Wrong',keyOK?'ok':'fail',SB_KEY.slice(0,22)+'...');
+  L(keyOK?'Key OK':'Key wrong',keyOK?'g':'r');
 
-  if (!window.supabase || !window.supabase.createClient) {
-    B(2, '❌ Failed', 'fail'); L('SDK failed to load ❌', 'r'); hide('aRunning'); return;
-  }
-  B(2, '✅ Loaded', 'ok'); L('SDK loaded ✅', 'g');
+  if(!window.supabase?.createClient){B(2,'❌ Failed','fail');L('SDK failed','r');hide('aRunning');return;}
+  B(2,'✅ Loaded','ok');L('SDK loaded ✅','g');
 
-  // ── Create client ────────────────────────────────────────────
-  const sb = window.supabase.createClient(SB_URL, SB_KEY, {
-    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+  const sb=window.supabase.createClient(SB_URL,SB_KEY,{
+    auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}
   });
 
-  // ── TEST 1: Ping via SDK (no AbortController — avoids cloning error) ──
-  L('Test 1: SDK ping...', 'b');
+  // Test 1: Ping
+  L('Test 1: Ping...','b');
   {
-    const t0 = Date.now();
-    const { data, error } = await sbQ(() =>
-      sb.from('admin_config').select('id').limit(1)
-    );
-    const ms = Date.now() - t0;
-    if (error) {
-      const isTimeout  = error.message?.includes('TIMEOUT');
-      const isMissing  = error.message?.includes('does not exist') || error.code === '42P01';
-      B(3, isTimeout ? '⏱ Timeout' : '❌ Error', 'fail', error.message.slice(0,60));
-      L('Ping FAILED: ' + error.message, 'r');
-      if (isTimeout) L('→ Supabase may be slow or paused. Wait 1 min and re-run.', 'y');
-      if (isMissing) { show('aSchema'); L('→ Run schema-FRESH.sql in Supabase SQL Editor', 'y'); }
-      hide('aRunning'); return; // Can't proceed
+    const t0=Date.now();
+    const {data,error}=await sbQ(()=>sb.from('admin_config').select('id').limit(1));
+    const ms=Date.now()-t0;
+    if(error){
+      B(3,'❌ Failed','fail',error.message.slice(0,60));
+      L('Ping FAILED: '+error.message,'r');
+      if(error.message.includes('does not exist'))show('aSchema');
+      hide('aRunning');return;
     }
-    B(3, '✅ ' + ms + 'ms', 'ok', ms + 'ms response time');
-    L('Ping OK ✅ ' + ms + 'ms', 'g');
+    B(3,'✅ '+ms+'ms','ok',ms+'ms response time');
+    L('Ping OK ✅ '+ms+'ms','g');
   }
 
-  // ── TESTS 2-4: Table existence ────────────────────────────────
-  let allTablesOK = true;
-  for (const [bid, tbl] of [[4,'admin_config'],[5,'approved_users'],[6,'app_data']]) {
-    L('Checking ' + tbl + '...', 'b');
-    const { count, error } = await sbQ(() =>
-      sb.from(tbl).select('*', { count: 'exact', head: true })
-    );
-    if (error) {
-      allTablesOK = false;
-      const missing = error.message?.includes('does not exist') || error.code === '42P01';
-      B(bid, missing ? '❌ Missing' : '❌ Error', 'fail',
-        missing ? 'Run schema-FRESH.sql' : error.message.slice(0,50));
-      L(tbl + ' ERROR: ' + error.message, 'r');
-      if (missing) show('aSchema');
-    } else {
-      B(bid, '✅ ' + (count ?? 0) + ' rows', 'ok', tbl + ': ' + (count ?? 0) + ' rows');
-      L(tbl + ' OK ✅ — ' + (count ?? 0) + ' rows', 'g');
+  // Tests 2-4: Tables
+  let allOK=true;
+  for(const [bid,tbl] of [[4,'admin_config'],[5,'approved_users'],[6,'app_data']]){
+    L('Checking '+tbl+'...','b');
+    const {count,error}=await sbQ(()=>sb.from(tbl).select('*',{count:'exact',head:true}));
+    if(error){
+      allOK=false;
+      const miss=error.message?.includes('does not exist')||error.code==='42P01';
+      B(bid,miss?'❌ Missing':'❌ Error','fail',miss?'Run schema-FRESH.sql':error.message.slice(0,50));
+      L(tbl+' ERROR: '+error.message,'r');
+      if(miss)show('aSchema');
+    }else{
+      B(bid,'✅ '+(count??0)+' rows','ok',tbl+': '+(count??0)+' rows');
+      L(tbl+' OK ✅ — '+(count??0)+' rows','g');
     }
   }
+  if(!allOK){[7,8,9].forEach(i=>B(i,'—','wait','skipped'));hide('aRunning');return;}
 
-  if (!allTablesOK) {
-    [7,8,9].forEach(i => B(i, '—', 'wait', 'skipped'));
-    hide('aRunning'); return;
-  }
+  // Test 5: Write
+  L('Test 5: Write...','b');
+  const testKey='diag_'+Date.now();
+  const {error:we}=await sbQ(()=>sb.from('app_data').upsert(
+    {user_id:'diagnostic',data_key:testKey,data_value:{ok:true,ts:new Date().toISOString()},updated_at:new Date().toISOString()},
+    {onConflict:'user_id,data_key'}
+  ));
+  if(we){B(7,'❌ Failed','fail',we.message.slice(0,60));L('Write FAIL: '+we.message,'r');
+    if(we.message?.includes('policy')||we.message?.includes('RLS'))show('aRLS');
+    B(8,'—','wait','');B(9,'—','wait','');hide('aRunning');return;}
+  B(7,'✅ OK','ok','Write successful');L('Write OK ✅','g');
 
-  // ── TEST 5: Write ────────────────────────────────────────────
-  L('Test 5: Write to app_data...', 'b');
-  const testKey = 'diag_' + Date.now();
-  const { error: writeErr } = await sbQ(() =>
-    sb.from('app_data').upsert(
-      { user_id: 'diagnostic', data_key: testKey,
-        data_value: { ok: true, ts: new Date().toISOString() },
-        updated_at: new Date().toISOString() },
-      { onConflict: 'user_id,data_key' }
-    )
-  );
-  if (writeErr) {
-    B(7, '❌ Failed', 'fail', writeErr.message.slice(0,60));
-    L('Write FAILED: ' + writeErr.message, 'r');
-    if (writeErr.message?.includes('policy') || writeErr.message?.includes('RLS')) show('aRLS');
-    B(8, '—', 'wait', 'skipped'); B(9, '—', 'wait', 'skipped');
-    hide('aRunning'); return;
-  }
-  B(7, '✅ OK', 'ok', 'Write successful');
-  L('Write OK ✅', 'g');
+  // Test 6: Read
+  L('Test 6: Read back...','b');
+  const {data:rd,error:re}=await sbQ(()=>sb.from('app_data').select('data_value')
+    .eq('user_id','diagnostic').eq('data_key',testKey).single());
+  if(re){B(8,'❌ Failed','fail',re.message);}
+  else{B(8,'✅ OK','ok','Data matched ✓');L('Read OK ✅','g');}
+  Promise.resolve(sb.from('app_data').delete().eq('user_id','diagnostic').eq('data_key',testKey)).then(()=>{}).catch(()=>{});
 
-  // ── TEST 6: Read back ─────────────────────────────────────────
-  L('Test 6: Read back...', 'b');
-  const { data: readData, error: readErr } = await sbQ(() =>
-    sb.from('app_data').select('data_value')
-      .eq('user_id', 'diagnostic').eq('data_key', testKey).single()
-  );
-  if (readErr) {
-    B(8, '❌ Failed', 'fail', readErr.message.slice(0,50));
-    L('Read FAILED: ' + readErr.message, 'r');
-  } else {
-    B(8, '✅ OK', 'ok', 'Data matched ✓');
-    L('Read OK ✅ — data: ' + JSON.stringify(readData?.data_value), 'g');
-  }
-  // Cleanup test row
-  Promise.resolve(
-    sb.from('app_data').delete().eq('user_id','diagnostic').eq('data_key', testKey)
-  ).then(() => {}).catch(() => {});
-
-  // ── TEST 7: Realtime ──────────────────────────────────────────
-  L('Test 7: Realtime channel...', 'b');
-  await new Promise(resolve => {
-    let settled = false;
-    const settle = (text, cls, detail) => {
-      if (settled) return; settled = true;
-      B(9, text, cls, detail);
-      L('Realtime: ' + detail, cls === 'ok' ? 'g' : 'y');
-      try { sb.removeChannel(ch); } catch (_) {}
+  // Test 7: Realtime — 30s timeout, use broadcast (faster than postgres_changes)
+  L('Test 7: Realtime (up to 30s)...','b');
+  await new Promise(resolve=>{
+    let done=false;
+    const settle=(text,cls,det)=>{
+      if(done)return; done=true;
+      B(9,text,cls,det);
+      L('Realtime: '+det,cls==='ok'?'g':cls==='warn'?'y':'r');
+      try{sb.removeChannel(ch);}catch(_){}
       resolve();
     };
-    const ch = sb.channel('arthadesk_diag_' + Date.now())
-      .subscribe(status => {
-        if (status === 'SUBSCRIBED')   settle('✅ Connected', 'ok', 'SUBSCRIBED — realtime working ✅');
-        else if (status === 'CLOSED')  settle('⚠️ Closed',   'warn', 'Channel closed');
-        else if (status === 'CHANNEL_ERROR') settle('❌ Error', 'fail', 'Realtime channel error');
+    // Use broadcast channel — fastest way to test RT connectivity
+    const ch=sb.channel('arthadesk_test_'+Date.now(),{config:{broadcast:{self:true}}})
+      .on('broadcast',{event:'ping'},()=>{
+        settle('✅ Connected','ok','Realtime working ✅ (broadcast)');
+      })
+      .subscribe(status=>{
+        L('RT status: '+status,'b');
+        if(status==='SUBSCRIBED'){
+          // Send a test broadcast to ourselves
+          ch.send({type:'broadcast',event:'ping',payload:{}});
+          // If we get our own broadcast within 5s → fully working
+          setTimeout(()=>{
+            if(!done) settle('✅ Subscribed','ok','Channel subscribed (broadcast echo pending)');
+          },5000);
+        }else if(status==='CHANNEL_ERROR'||status==='TIMED_OUT'){
+          settle('❌ '+status,'fail','RT connection failed — run realtime-fix.sql');
+        }
       });
-    setTimeout(() => settle('⏱ Timeout', 'warn', 'No response in ' + Math.round(TIMEOUT/1000) + 's'), TIMEOUT);
+    setTimeout(()=>settle('⚠️ Timeout','warn','No response in 30s — Supabase RT may be slow on free tier'),RT_TO);
   });
 
-  // ── DONE ─────────────────────────────────────────────────────
+  // Done
   hide('aRunning');
-  const fails = document.querySelectorAll('.badge.fail').length;
-  L('─────────────────────────────', 'b');
-  if (fails === 0) {
-    show('aOK');
-    L('🎉 ALL TESTS PASSED — Supabase fully connected!', 'g');
-  } else {
-    L('⚠️ ' + fails + ' failure(s) — see above', 'y');
-  }
+  const fails=document.querySelectorAll('.badge.fail').length;
+  L('─────────────────────','b');
+  if(fails===0){show('aOK');L('🎉 ALL TESTS PASSED!','g');}
+  else L('⚠️ '+fails+' failure(s) — see above','y');
 }
 
-// Run after SDK has time to load
-window.addEventListener('load', () => setTimeout(run, 500));
+window.addEventListener('load',()=>setTimeout(run,500));
 </script>
 </body>
 </html>
