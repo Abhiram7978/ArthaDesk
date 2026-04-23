@@ -7220,24 +7220,53 @@ function doPrint() {
     '</head><body>' +
     '<div style="padding-bottom:70px;">' + invoiceHTML + '</div>' +
     '<div class="no-print">' +
-    '  <button class="btn-back" onclick="window.location.reload()">&#8592; Back to App</button>' +
+    '  <button class="btn-close" onclick="window.close?window.close():history.back()" style="flex:1;padding:12px;background:#2a3547;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer">&#x2715; Close</button>' +
     '  <button class="btn-print" onclick="window.print()">&#x1F5A8; Print / Save PDF</button>' +
     '</div>' +
     '</bo'+'dy></html>';
 
-  // Try Blob URL first — opens in new tab, app page stays alive
-  try {
-    var blob = new Blob([fullPage], { type: 'text/html' });
-    var blobURL = URL.createObjectURL(blob);
-    var newTab = window.open(blobURL, '_blank');
-    if (newTab) return; // success — app intact, Supabase writes complete normally
-  } catch(blobErr) {}
+  // ── Use hidden iframe — works on Android Chrome print spooler ──────────
+  // Blob URLs are sandboxed and fail in Android print spooler.
+  // iframe content is part of the current page → print spooler renders it fine.
+  // App page is never replaced → no data loss, autoSave completes normally.
 
-  // Fallback: document.write (flushes autoSave first)
-  if (typeof autoSave === 'function') try { autoSave(); } catch(_) {}
-  document.open();
-  document.write(fullPage);
-  document.close();
+  // Remove any existing print iframe
+  var oldFrame = document.getElementById('_printFrame');
+  if (oldFrame) oldFrame.parentNode.removeChild(oldFrame);
+
+  var frame = document.createElement('iframe');
+  frame.id = '_printFrame';
+  frame.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;border:none;z-index:99999;background:#fff;';
+  document.body.appendChild(frame);
+
+  // Write invoice HTML into iframe
+  var fdoc = frame.contentDocument || frame.contentWindow.document;
+  fdoc.open();
+  fdoc.write(fullPage);
+  fdoc.close();
+
+  // Wait for iframe to load, then print
+  frame.onload = function() {
+    setTimeout(function() {
+      try {
+        frame.contentWindow.focus();
+        frame.contentWindow.print();
+      } catch(e) {
+        // Fallback if iframe print fails
+        if (typeof autoSave === 'function') try { autoSave(); } catch(_) {}
+        document.open(); document.write(fullPage); document.close();
+        return;
+      }
+      // After print dialog closes, remove iframe (app page was never replaced)
+      window.addEventListener('focus', function removePrintFrame() {
+        window.removeEventListener('focus', removePrintFrame);
+        setTimeout(function() {
+          var f = document.getElementById('_printFrame');
+          if (f) f.parentNode.removeChild(f);
+        }, 500);
+      });
+    }, 300);
+  };
 }
 
 function showAddLedgerModal() {
