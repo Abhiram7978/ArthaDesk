@@ -278,8 +278,8 @@ select.form-control option{background:var(--surface)}
   .data-table td{padding:8px 8px}
 
   /* ── Invoice items table ── */
-  .invoice-items-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 -4px;padding:0 4px}
-  .invoice-items-table{min-width:680px}
+  .invoice-items-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 -4px;padding:0 4px;border-radius:var(--radius);border:1px solid var(--border)}
+  .invoice-items-table{min-width:780px;border:none}
 
   /* ── Table header row ── */
   .table-header{flex-wrap:wrap;gap:8px;padding:10px 12px}
@@ -320,9 +320,75 @@ select.form-control option{background:var(--surface)}
   /* ── Page spacing ── */
   .page{padding-bottom:10px}
 
-  /* ── Invoice totals section ── */
-  .invoice-totals{padding:10px 12px}
-  .total-row{font-size:13px;padding:3px 0}
+  /* ── Invoice bottom grid: stack on mobile ── */
+  .inv-bottom-grid{
+    grid-template-columns:1fr!important;
+    gap:12px!important
+  }
+  /* Show totals FIRST (order), then notes below */
+  .inv-bottom-grid .invoice-total-box{order:-1}
+  /* Totals box full styling on mobile */
+  .invoice-total-box{
+    padding:14px 16px;
+    border-radius:var(--radius2)
+  }
+  .invoice-total-box .total-row{
+    font-size:13px;
+    padding:5px 0
+  }
+  .invoice-total-box .total-row.grand{
+    font-size:15px;
+    padding-top:10px;
+    margin-top:6px
+  }
+  .invoice-total-box .total-row span:last-child{
+    font-family:'JetBrains Mono',monospace
+  }
+  #amount-words{font-size:11px;margin-top:8px}
+
+  /* ── Invoice total box: make label+amount never wrap awkwardly ── */
+  .total-row{flex-wrap:nowrap;gap:8px}
+  .total-row span:first-child{flex:1;min-width:0}
+
+  /* ── Invoice items table — scroll hint ── */
+  .invoice-items-table-wrap::after{
+    content:'⟵ swipe table left/right ⟶';
+    display:block;
+    text-align:center;
+    font-size:10px;
+    color:var(--text3);
+    padding:4px;
+    background:var(--surface2);
+    border-radius:0 0 var(--radius) var(--radius);
+    letter-spacing:.3px
+  }
+
+  /* ── Invoice action buttons ── */
+  #inv-create > .voucher-actions{margin-top:12px}
+
+  /* ── Voucher action buttons — full-width stacked on mobile ── */
+  .voucher-actions{flex-direction:column!important;gap:8px!important;justify-content:stretch!important}
+  .voucher-actions .topbar-btn{width:100%!important;text-align:center!important;padding:13px!important;font-size:14px!important;min-height:48px!important;border-radius:10px!important}
+  .voucher-actions .topbar-btn.btn-primary{order:-1}
+
+  /* ── Form section title — wrap secondary hint text on mobile ── */
+  .form-section-title{flex-wrap:wrap;gap:4px}
+  .form-section-title span{font-size:10px!important;width:100%;margin-left:0!important}
+
+  /* ── Journal entry table mobile ── */
+  .journal-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:var(--radius);border:1px solid var(--border)}
+  .journal-table-wrap .invoice-items-table{min-width:520px;border:none}
+  .journal-table-wrap .invoice-items-table th{padding:8px 8px;font-size:9px}
+  .journal-table-wrap .invoice-items-table td{padding:6px 6px}
+  .journal-table-wrap .invoice-items-table td input,.journal-table-wrap .invoice-items-table td select{padding:8px 6px;font-size:15px!important}
+  .journal-scroll-hint{text-align:center;font-size:10px;color:var(--text3);padding:5px;background:var(--surface2);border-radius:0 0 var(--radius) var(--radius);letter-spacing:.3px}
+
+  /* ── Purchase bill items table mobile ── */
+  .pur-items-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .pur-items-wrap .invoice-items-table{min-width:700px}
+
+  /* ── Contra journal preview stack ── */
+  #page-contra-voucher .form-section > div[style*="surface2"]{font-size:12px}
 }
 
 /* ── Small phones (420px and below) ── */
@@ -345,6 +411,9 @@ select.form-control option{background:var(--surface)}
 
   /* Font size 16px prevents iOS auto-zoom on input focus */
   input.form-control,select.form-control,textarea.form-control{font-size:16px!important}
+
+  /* Also apply to invoice items table inputs */
+  .invoice-items-table td input,.invoice-items-table td select{font-size:15px!important;min-height:38px}
 
   .hide-xs{display:none!important}
 
@@ -1786,7 +1855,7 @@ select.form-control option{background:var(--surface)}
               <button class="topbar-btn btn-secondary" onclick="addItemRow()">+ Add Row</button>
             </div>
 
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px">
+            <div class="inv-bottom-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px">
               <div>
                 <div class="form-group">
                   <label class="form-label">Notes / Narration</label>
@@ -1816,7 +1885,7 @@ select.form-control option{background:var(--surface)}
             </div>
           </div>
 
-          <div style="display:flex;gap:10px;justify-content:flex-end" class="no-print">
+          <div class="voucher-actions" style="display:flex;gap:10px;justify-content:flex-end" class="no-print">
             <button class="topbar-btn btn-secondary" onclick="switchTabById('inv-list')">← Back</button>
             <button class="topbar-btn btn-secondary" onclick="resetInvoiceForm();showToast('Form cleared','success')">🗑 Clear</button>
             <button class="topbar-btn btn-primary" onclick="saveInvoice()">💾 Save & Post</button>
@@ -1888,7 +1957,7 @@ select.form-control option{background:var(--surface)}
               <div style="font-size:11px;color:var(--text3);margin-top:8px">📌 Supplier Invoice No. is required for GSTR-2 ITC reconciliation</div>
             </div>
             <!-- Item rows -->
-            <div style="margin-top:16px;overflow-x:auto">
+            <div class="pur-items-wrap" style="margin-top:16px;overflow-x:auto">
               <table class="invoice-items-table">
                 <thead><tr><th>#</th><th>Item</th><th>HSN</th><th>Qty</th><th>Unit</th><th>Rate(₹)</th><th>Disc%</th><th>GST%</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Amount</th><th></th></tr></thead>
                 <tbody id="pur-items-body"></tbody>
@@ -1903,7 +1972,7 @@ select.form-control option{background:var(--surface)}
               <div class="total-row" id="pur-igst-row"><span>IGST</span><span id="pur-total-igst">₹ 0.00</span></div>
               <div class="total-row grand"><span>GRAND TOTAL</span><span id="pur-grand-total">₹ 0.00</span></div>
             </div>
-            <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+            <div class="voucher-actions" style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
               <button class="topbar-btn btn-secondary" onclick="switchTabById('pur-list')">← Back</button>
               <button class="topbar-btn btn-primary" onclick="savePurchase()">💾 Save & Post</button>
             </div>
@@ -1926,7 +1995,7 @@ select.form-control option{background:var(--surface)}
             <div class="form-group"><label class="form-label">Against Invoice</label><input type="text" class="form-control" id="rcv-against" placeholder="e.g. SI-001, SI-002..."></div>
             <div class="form-group full"><label class="form-label">Narration</label><textarea class="form-control" rows="2" placeholder="Being amount received from..."></textarea></div>
           </div>
-          <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+          <div class="voucher-actions" style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
             <button class="topbar-btn btn-secondary" onclick="clearReceiptForm()">Cancel</button>
             <button class="topbar-btn btn-primary" onclick="saveReceipt()">💾 Save & Post</button>
           </div>
@@ -1956,7 +2025,7 @@ select.form-control option{background:var(--surface)}
             <div class="form-group"><label class="form-label">Against Bill</label><input type="text" class="form-control" id="pmt-against" placeholder="e.g. PB-001, PB-002..."></div>
             <div class="form-group full"><label class="form-label">Narration</label><textarea class="form-control" rows="2" placeholder="Being amount paid to..."></textarea></div>
           </div>
-          <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+          <div class="voucher-actions" style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
             <button class="topbar-btn btn-secondary" onclick="clearPaymentForm()">Cancel</button>
             <button class="topbar-btn btn-primary" onclick="savePayment()">💾 Save & Post</button>
           </div>
@@ -1975,6 +2044,7 @@ select.form-control option{background:var(--surface)}
             <div class="form-group full"><label class="form-label">Narration</label><input type="text" class="form-control" id="jv-narration" placeholder="Brief description of this entry..."></div>
           </div>
           <div style="margin-top:16px">
+            <div class="journal-table-wrap">
             <table class="invoice-items-table">
               <thead><tr><th>Account / Ledger *</th><th>Narration</th><th>Debit (₹)</th><th>Credit (₹)</th><th></th></tr></thead>
               <tbody id="journal-body">
@@ -1995,9 +2065,11 @@ select.form-control option{background:var(--surface)}
                 </tr>
               </tfoot>
             </table>
+            </div>
+            <div class="journal-scroll-hint" id="journal-scroll-hint" style="display:none">⟵ scroll horizontally ⟶</div>
             <button class="topbar-btn btn-secondary" style="margin-top:10px" onclick="addJournalRow()">+ Add Row</button>
           </div>
-          <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+          <div class="voucher-actions" style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
             <button class="topbar-btn btn-secondary">Cancel</button>
             <button class="topbar-btn btn-primary" onclick="saveJournalEntry()">💾 Save & Post Entry</button>
           </div>
@@ -2045,7 +2117,7 @@ select.form-control option{background:var(--surface)}
             <div class="form-group"><label class="form-label">Amount (₹)</label><input type="number" class="form-control" placeholder="0.00"></div>
             <div class="form-group full"><label class="form-label">Narration</label><textarea class="form-control" rows="2" placeholder="Reason for credit note..."></textarea></div>
           </div>
-          <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+          <div class="voucher-actions" style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
             <button class="topbar-btn btn-primary" onclick="showToast('Credit note saved!','success')">💾 Save</button>
           </div>
         </div>
@@ -2092,7 +2164,7 @@ select.form-control option{background:var(--surface)}
               <span style="color:var(--success);font-family:'JetBrains Mono',monospace" id="cv-cr-preview">₹ 0.00</span>
             </div>
           </div>
-          <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+          <div class="voucher-actions" style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
             <button class="topbar-btn btn-secondary">Cancel</button>
             <button class="topbar-btn btn-primary" onclick="saveContraVoucher()">💾 Save & Post</button>
           </div>
@@ -7128,6 +7200,11 @@ document.addEventListener('DOMContentLoaded', function() {
     var el = document.getElementById(id);
     if (el) el.addEventListener('input', adeUpdateContraPreview);
   });
+  // Show journal table scroll hint on mobile
+  if (window.innerWidth <= 768) {
+    var jHint = document.getElementById('journal-scroll-hint');
+    if (jHint) jHint.style.display = 'block';
+  }
 });
 
 // ================== MODALS ==================
@@ -7167,7 +7244,14 @@ function doPrint() {
   // (not from #inv-no which may already show the NEXT invoice number)
   var printModal = document.getElementById('printModal');
   var voucherNo = (printModal && printModal.dataset.voucherNo) ? printModal.dataset.voucherNo : 'Tax Invoice';
-  var pdfTitle = voucherNo; // browser uses <title> as PDF filename
+  // Sanitise: strip characters not safe for filenames
+  var safeVoucherNo = voucherNo.replace(/[\/\\:*?"<>|]/g, '-').trim() || 'Tax Invoice';
+  var pdfTitle = safeVoucherNo; // browser uses <title> as PDF "Save As" default filename
+
+  // Also update the current page title so if mobile iframe prints via window.print(),
+  // the OS print-to-PDF dialog uses the invoice number as filename.
+  var _origTitle = document.title;
+  document.title = pdfTitle;
 
   var isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 
@@ -7185,6 +7269,8 @@ function doPrint() {
     try { popup = window.open('', '_blank', 'width=850,height=1100'); } catch(e) {}
     if (popup && !popup.closed) {
       popup.document.open(); popup.document.write(printDoc); popup.document.close();
+      // Restore current page title (desktop doesn't need it changed)
+      document.title = _origTitle;
       return;
     }
   }
@@ -7263,6 +7349,8 @@ function doPrint() {
         setTimeout(function() {
           var f = document.getElementById('_printFrame');
           if (f) f.parentNode.removeChild(f);
+          // Restore original page title
+          document.title = _origTitle;
         }, 500);
       });
     }, 300);
