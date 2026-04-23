@@ -742,13 +742,11 @@ select.form-control option{background:var(--surface)}
   }
 
   function _refreshUI() {
+    // IMPORTANT: Do NOT call loadCompanyState here.
+    // loadCompanyState reads from localStorage which may have been
+    // overwritten by _pull() with stale Supabase data.
+    // Instead, just re-render the UI from current in-memory variables.
     try {
-      if (window._activeCompanyKey && typeof loadCompanyState === 'function') {
-        var c = (window.registeredCompanies || []).find(function(x) {
-          return typeof companyKey === 'function' && companyKey(x.name) === window._activeCompanyKey;
-        });
-        if (c) loadCompanyState(c.name);
-      }
       ['renderDashboard','updateDashInfoBar','renderAllMasters','updateDashboardStats',
        'rebuildInvoiceListUI','rebuildPurchaseListUI','rebuildReceiptListUI','rebuildPaymentListUI'].forEach(function(f) {
         if (typeof window[f] === 'function') try { window[f](); } catch(_) {}
@@ -883,7 +881,14 @@ select.form-control option{background:var(--surface)}
             if (!had) _push(user.id);
             var latest = window.blLoad('arthadesk_companies', []);
             if (Array.isArray(latest) && latest.length) window.registeredCompanies = latest;
-            if (window._adAppActive) _refreshUI();
+            // After pull: reload state from localStorage into memory, then re-render
+            if (window._adAppActive && window._activeCompanyKey) {
+              var co = (window.registeredCompanies || []).find(function(c) {
+                return typeof companyKey === 'function' && companyKey(c.name) === window._activeCompanyKey;
+              });
+              if (co && typeof loadCompanyState === 'function') loadCompanyState(co.name);
+              else _refreshUI();
+            }
           }).catch(function(e) { console.warn('[AD] bg pull error:', e.message); });
         }
       });
@@ -2547,42 +2552,6 @@ select.form-control option{background:var(--surface)}
 
       <!-- SETTINGS -->
       <div class="page" id="page-settings">
-
-        <!-- ── INSTALL APP ──────────────────────────────────── -->
-        <div class="form-section" style="margin-bottom:16px">
-          <div class="form-section-title">📲 Install App</div>
-          <div id="pwaInstallCard" style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:8px">
-            <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
-              <img src="icons/icon-192.png" style="width:48px;height:48px;border-radius:12px" onerror="this.style.display='none'">
-              <div>
-                <div style="font-weight:700;font-size:15px;color:var(--text)">ArthaDesk</div>
-                <div style="font-size:12px;color:var(--text3)">GST Ready Accounting</div>
-              </div>
-            </div>
-            <div id="pwaInstallAndroid" style="display:none">
-              <p style="font-size:13px;color:var(--text2);margin-bottom:10px">Install ArthaDesk as a native app on your device for faster access.</p>
-              <button onclick="triggerInstall()" style="width:100%;padding:12px;background:linear-gradient(135deg,#00d4aa,#0080ff);color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer">⬇️ Install ArthaDesk</button>
-            </div>
-            <div id="pwaInstallIOS" style="display:none">
-              <p style="font-size:13px;color:var(--text2);margin-bottom:8px">To install on iPhone/iPad:</p>
-              <div style="font-size:13px;color:var(--text);line-height:1.8">
-                1. Tap the <strong>Share</strong> button (□↑) in Safari<br>
-                2. Scroll down and tap <strong>"Add to Home Screen"</strong><br>
-                3. Tap <strong>"Add"</strong> to confirm
-              </div>
-            </div>
-            <div id="pwaInstallDesktop" style="display:none">
-              <p style="font-size:13px;color:var(--text2);margin-bottom:10px">Install ArthaDesk as a desktop app.</p>
-              <button onclick="triggerInstall()" style="width:100%;padding:12px;background:linear-gradient(135deg,#00d4aa,#0080ff);color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer">⬇️ Install ArthaDesk</button>
-            </div>
-            <div id="pwaInstallDone" style="display:none">
-              <p style="font-size:13px;color:#22c55e;font-weight:600">✅ ArthaDesk is installed on this device!</p>
-            </div>
-            <div id="pwaInstallUnsupported" style="display:none">
-              <p style="font-size:13px;color:var(--text3)">Open this page in Chrome (Android) or Safari (iPhone) to install as an app.</p>
-            </div>
-          </div>
-        </div>
 
         <!-- ── BACKUP & RESTORE ─────────────────────────────── -->
         <div class="form-section" style="margin-bottom:16px">
@@ -7256,6 +7225,16 @@ function doPrint() {
     '</div>' +
     '</bo'+'dy></html>';
 
+  // Try Blob URL first — opens in new tab, app page stays alive
+  try {
+    var blob = new Blob([fullPage], { type: 'text/html' });
+    var blobURL = URL.createObjectURL(blob);
+    var newTab = window.open(blobURL, '_blank');
+    if (newTab) return; // success — app intact, Supabase writes complete normally
+  } catch(blobErr) {}
+
+  // Fallback: document.write (flushes autoSave first)
+  if (typeof autoSave === 'function') try { autoSave(); } catch(_) {}
   document.open();
   document.write(fullPage);
   document.close();
@@ -12751,140 +12730,50 @@ else{setTimeout(_injectPDFBtns,900);}
 </div>
 
 <script>
-// ══════════════════════════════════════════════
-//  ArthaDesk PWA Install Manager
-// ══════════════════════════════════════════════
-var _pwaPrompt   = null;
-var _pwaInstalled = false;
-var _isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
-var _isSafari = /safari/i.test(navigator.userAgent) && !/chrome|crios/i.test(navigator.userAgent);
-var _isChrome = /chrome|crios/i.test(navigator.userAgent);
-var _isAndroid = /android/i.test(navigator.userAgent);
+// ArthaDesk PWA Install
+var _pwaPrompt = null;
 
-// Detect if already installed (standalone mode)
-if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true) {
-  _pwaInstalled = true;
-}
-
-// Capture install prompt (Chrome/Android/Desktop)
 window.addEventListener('beforeinstallprompt', function(e) {
   e.preventDefault();
   _pwaPrompt = e;
-  // Show floating banner
+  // Show floating install banner
   var b = document.getElementById('pwaBanner');
-  if (b && !_pwaInstalled) b.style.display = 'flex';
-  // Update settings card
-  _updateInstallCard();
-  console.log('[PWA] Install prompt available');
+  if (b) b.style.display = 'flex';
+  console.log('[PWA] Install prompt ready');
 });
 
 window.addEventListener('appinstalled', function() {
-  _pwaInstalled = true;
   var b = document.getElementById('pwaBanner');
   if (b) b.style.display = 'none';
-  _updateInstallCard();
   if (typeof showToast === 'function') showToast('✅ ArthaDesk installed!', 'success');
 });
 
-function _updateInstallCard() {
-  var android  = document.getElementById('pwaInstallAndroid');
-  var ios      = document.getElementById('pwaInstallIOS');
-  var desktop  = document.getElementById('pwaInstallDesktop');
-  var done     = document.getElementById('pwaInstallDone');
-  var unsup    = document.getElementById('pwaInstallUnsupported');
-  if (!android) return; // settings page not rendered yet
-
-  // Hide all first
-  [android, ios, desktop, done, unsup].forEach(function(el) { if(el) el.style.display='none'; });
-
-  if (_pwaInstalled) {
-    if (done) done.style.display = 'block';
-  } else if (_pwaPrompt) {
-    // Chrome/Android/Desktop with install prompt
-    if (_isAndroid) { if(android) android.style.display='block'; }
-    else            { if(desktop) desktop.style.display='block'; }
-  } else if (_isIOS && _isSafari) {
-    // iOS Safari — manual instructions
-    if (ios) ios.style.display = 'block';
-  } else if (_isIOS && !_isSafari) {
-    // iOS but not Safari — can't install
-    if (unsup) unsup.style.display = 'block';
-  } else {
-    // Desktop Chrome without prompt yet — show waiting message
-    if (desktop) {
-      desktop.style.display = 'block';
-      var btn = desktop.querySelector('button');
-      if (btn && !_pwaPrompt) {
-        btn.textContent = '⏳ Loading install option...';
-        btn.disabled = true;
-        // Re-enable when prompt arrives
-        var check = setInterval(function() {
-          if (_pwaPrompt) {
-            btn.textContent = '⬇️ Install ArthaDesk';
-            btn.disabled = false;
-            clearInterval(check);
-          }
-        }, 500);
-      }
-    }
-  }
-}
-
-function triggerInstall() {
-  if (!_pwaPrompt) {
-    if (typeof showToast === 'function') showToast('⚠️ Install option not available yet. Try again in a moment.', 'danger');
-    return;
-  }
+function installPWA() {
+  if (!_pwaPrompt) return;
   var b = document.getElementById('pwaBanner');
   if (b) b.style.display = 'none';
   _pwaPrompt.prompt();
   _pwaPrompt.userChoice.then(function(r) {
-    if (r.outcome === 'accepted') {
-      _pwaInstalled = true;
-      _updateInstallCard();
-      if (typeof showToast === 'function') showToast('✅ ArthaDesk installed!', 'success');
-    }
     _pwaPrompt = null;
+    if (r.outcome === 'accepted' && typeof showToast === 'function') {
+      showToast('✅ ArthaDesk installed!', 'success');
+    }
   });
 }
 
-// PWA banner functions (floating bottom banner)
-function showPWABanner() {
+function dismissPWA() {
   var b = document.getElementById('pwaBanner');
-  if (b && _pwaPrompt && !_pwaInstalled) b.style.display = 'flex';
+  if (b) b.style.display = 'none';
 }
-function installPWA()  { triggerInstall(); }
-function dismissPWA()  { var b=document.getElementById('pwaBanner'); if(b) b.style.display='none'; }
-
-// Update install card when Settings page is opened
-var _origNavigate = window.navigate;
-window.navigate = function(page) {
-  if (typeof _origNavigate === 'function') _origNavigate(page);
-  if (page === 'settings') {
-    setTimeout(_updateInstallCard, 100);
-  }
-};
 
 // Register Service Worker
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function() {
     navigator.serviceWorker.register('sw.js', { scope: '/ArthaDesk/' })
-      .then(function(reg) {
-        console.log('[PWA] SW registered:', reg.scope);
-        // Force update if new version available
-        reg.addEventListener('updatefound', function() {
-          var newSW = reg.installing;
-          newSW.addEventListener('statechange', function() {
-            if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
-              newSW.postMessage({ type: 'SKIP_WAITING' });
-            }
-          });
-        });
-      })
-      .catch(function(err) { console.warn('[PWA] SW failed:', err); });
+      .then(function(reg) { console.log('[PWA] SW registered:', reg.scope); })
+      .catch(function(e)  { console.warn('[PWA] SW failed:', e); });
   });
 }
-
 </script>
 </body>
 </html>
