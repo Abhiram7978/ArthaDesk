@@ -781,7 +781,7 @@ async function loadAll() {
 
 /* ── REALTIME SYNC ──────────────────────────── */
 let _adminChannel = null;
-function startAdminRealtime() {
+async function startAdminRealtime() {
   if (_adminChannel) sb.removeChannel(_adminChannel);
   _adminChannel = sb.channel('admin_realtime')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'approved_users' }, async () => {
@@ -901,7 +901,7 @@ function showAddUserModal() {
 
 async function createUser() {
   const name = document.getElementById('nu-name').value.trim();
-  const email= document.getElementById('nu-email').value.trim();
+  const email= document.getElementById('nu-email').value.trim().toLowerCase();
   const pwd  = document.getElementById('nu-pwd').value.trim();
   const cos  = getTags('nu-tags');
   if (!name||!email||!pwd) { toast('Name, email & password required','err'); return; }
@@ -932,7 +932,7 @@ function showEditUserModal(id) {
 async function updateUser() {
   const id   = document.getElementById('eu-id').value;
   const name = document.getElementById('eu-name').value.trim();
-  const email= document.getElementById('eu-email').value.trim();
+  const email= document.getElementById('eu-email').value.trim().toLowerCase();
   const pwd  = document.getElementById('eu-pwd').value.trim();
   const cos  = getTags('eu-tags');
   if (!name||!email) { toast('Name & email required','err'); return; }
