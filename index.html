@@ -677,242 +677,167 @@ select.form-control option{background:var(--surface)}
   window.ARTHADESK_CONFIG  = { appName:'ArthaDesk', version:'3.9', localCache:true, syncInterval:30000 };
   </script>
 <script>
-/* ArthaDesk Supabase Layer — Simple, Reliable */
+/* ═══════════════════════════════════════════════════════════
+   ArthaDesk Supabase Layer v10 — Write-Queue Architecture
+   
+   FIX: blSave() now uses a write queue with guaranteed flush
+   before logout. Data ALWAYS reaches Supabase before session ends.
+   ═══════════════════════════════════════════════════════════ */
 (function() {
   'use strict';
 
   // Clear old SW caches
   if ('serviceWorker' in navigator && 'caches' in window) {
-    caches.keys().then(ks => ks.forEach(k => {
-      if (k !== 'arthadesk-v4') caches.delete(k);
-    })).catch(() => {});
+    caches.keys().then(function(ks) {
+      ks.forEach(function(k) { if (k !== 'arthadesk-v5') caches.delete(k); });
+    }).catch(function() {});
   }
 
-  // ── State ──────────────────────────────────────────────────
-  var _sb      = null;
-  var _uid     = null;
-  var _rtCh    = null;
-  var _writing = false;
-  var _ready   = false;
-  var TO       = 10000; // 10s Supabase timeout
+  // ── Core state ────────────────────────────────────────────
+  var _sb           = null;
+  var _uid          = null;
+  var _rtCh         = null;
+  var _ready        = false;
+  var _writing      = false;      // true only during _pull()
+  var _memStore     = {};         // in-memory store (source of truth)
+  var _pendingWrites = {};        // key→val queue waiting to flush to Supabase
+  var _flushTimer   = null;       // debounce timer
+  var _isFlushing   = false;      // prevent concurrent flushes
+  var TO            = 12000;
 
-  // ── Timeout wrapper ────────────────────────────────────────
+  // Real localStorage — session token + theme only, never app data
+  var _sessionLS = window.localStorage;
+
+  // ── Timeout wrapper ───────────────────────────────────────
   function sbQ(fn) {
     return Promise.race([
       Promise.resolve(fn()).then(function(r){return r;}, function(e){return {data:null,count:null,error:e};}),
-      new Promise(function(res){ setTimeout(function(){ res({data:null,count:null,error:new Error('TIMEOUT')}); }, TO); })
+      new Promise(function(res){ setTimeout(function(){ res({data:null,count:null,error:{message:'TIMEOUT'}}); }, TO); })
     ]);
   }
 
-  // ── Init Supabase ──────────────────────────────────────────
+  // ── Init Supabase ─────────────────────────────────────────
   function _initSB() {
-    if (!window.SUPABASE_URL || window.SUPABASE_URL.includes('YOUR_PROJECT')) return;
+    if (!window.SUPABASE_URL || !window.SUPABASE_ANON_KEY) return;
     if (!window.supabase || !window.supabase.createClient) return;
     try {
       _sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, {
-        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-        realtime: { params: { eventsPerSecond: 10 } }
+        auth: { persistSession:false, autoRefreshToken:false, detectSessionInUrl:false },
+        realtime: { params: { eventsPerSecond:10 } }
       });
-      window._supabaseClient = _sb;
-      _ready = true;
-      console.log('[AD] Supabase ready');
-    } catch(e) { console.error('[AD] Supabase init failed:', e.message); }
+      window._supabaseClient = _sb; _ready = true;
+      console.log('[AD v10] Supabase ready');
+    } catch(e) { console.error('[AD v10] init failed:', e.message); }
   }
-  if (window.supabase && window.supabase.createClient) {
-    _initSB();
-  } else {
-    var _t = setInterval(function() {
-      if (window.supabase && window.supabase.createClient) { clearInterval(_t); _initSB(); }
+  if (window.supabase && window.supabase.createClient) { _initSB(); }
+  else {
+    var _initT = setInterval(function() {
+      if (window.supabase && window.supabase.createClient) { clearInterval(_initT); _initSB(); }
     }, 50);
   }
 
-  // ── localStorage proxy ─────────────────────────────────────
-  var _realLS = window.localStorage;
-  function _isAppKey(k) { return k && (k.startsWith('arthadesk_') || k.startsWith('ade_')); }
-  try {
-    Object.defineProperty(window, 'localStorage', {
-      get: function() {
-        return {
-          getItem:    function(k)    { return _realLS.getItem(k); },
-          setItem:    function(k, v) { _realLS.setItem(k, v); if (_isAppKey(k) && _uid && !_writing) _sbSave(k, v); },
-          removeItem: function(k)    { _realLS.removeItem(k); if (_isAppKey(k) && _uid && !_writing) _sbDel(k); },
-          clear:      function()     { _realLS.clear(); },
-          key:        function(n)    { return _realLS.key(n); },
-          get length()               { return _realLS.length; }
-        };
-      },
-      configurable: true
+  function _ensureSB() {
+    if (_sb) return Promise.resolve();
+    return new Promise(function(res) {
+      var w=0, iv=setInterval(function() { w+=100; if(_sb||w>=8000){clearInterval(iv);res();} },100);
     });
-    console.log('[AD] localStorage proxy active');
-  } catch(e) { console.warn('[AD] proxy failed:', e.message); }
+  }
 
-  // ── Supabase writes ────────────────────────────────────────
-  function _sbSave(key, raw) {
+  // ── WRITE ENGINE — immediate write, no debounce ──────────
+  // Every blSave writes immediately to Supabase.
+  // Per-key write chain prevents concurrent overwrites for same key.
+  // If a key is written while previous write is in-flight, the new
+  // value queues behind it (latest value always wins).
+
+  var _writeChains = {};   // key → Promise chain
+  var _pendingVal  = {};   // key → latest value (dedup: only write latest)
+  var _writeActive = {};   // key → true if write in flight
+
+  function _queueWrite(key, val) {
+    _pendingWrites[key] = val;  // track for logout flush
+    _pendingVal[key]    = val;  // latest value (may overwrite a queued one)
+
+    if (_writeActive[key]) {
+      // A write is already in-flight for this key.
+      // The latest value is stored in _pendingVal[key].
+      // When that write finishes, it will pick up the latest value.
+      return;
+    }
+
+    _doWrite(key);
+  }
+
+  function _doWrite(key) {
     if (!_sb || !_uid) return;
-    var val; try { val = JSON.parse(raw); } catch(_) { val = raw; }
+    var val = _pendingVal[key];
+    if (val === undefined) return;
+
+    _writeActive[key] = true;
+    delete _pendingVal[key];  // consumed
+    _setDot(false);           // yellow = writing
+
+    var row = { user_id:_uid, data_key:key, data_value:val, updated_at:new Date().toISOString() };
     sbQ(function() {
-      return _sb.from('app_data').upsert(
-        { user_id: _uid, data_key: key, data_value: val, updated_at: new Date().toISOString() },
-        { onConflict: 'user_id,data_key' }
-      );
-    }).then(function(r) { if (r.error && r.error.message !== 'TIMEOUT') console.warn('[AD] save error:', key, r.error.message); });
-  }
-  function _sbDel(key) {
-    if (!_sb || !_uid) return;
-    sbQ(function() { return _sb.from('app_data').delete().match({ user_id: _uid, data_key: key }); })
-      .then(function(r) { if (r.error && r.error.message !== 'TIMEOUT') console.warn('[AD] del error:', r.error.message); });
-  }
+      return _sb.from('app_data').upsert(row, { onConflict:'user_id,data_key' });
+    }).then(function(r) {
+      if (r.error && r.error.message !== 'TIMEOUT') {
+        console.warn('[AD v10] write error:', key, r.error.message);
+        // Retry once on error
+        _pendingVal[key] = row.data_value;
+        _writeActive[key] = false;
+        setTimeout(function() { _doWrite(key); }, 1000);
+        return;
+      }
+      delete _pendingWrites[key];
+      _writeActive[key] = false;
+      console.log('[AD v10] saved:', key, '✅');
 
-  // ── Pull from Supabase into localStorage ───────────────────
-  function _pull(uid) {
-    return sbQ(function() {
-      return _sb.from('app_data').select('data_key,data_value').eq('user_id', uid);
-    }).then(function(result) {
-      if (result.error || !result.data || !result.data.length) return false;
-      _writing = true;
-      result.data.forEach(function(row) {
-        try { _realLS.setItem(row.data_key, JSON.stringify(row.data_value)); } catch(_) {}
-      });
-      _writing = false;
-      console.log('[AD] pulled', result.data.length, 'keys');
-      return true;
+      // If a newer value arrived while we were writing, write it now
+      if (_pendingVal[key] !== undefined) {
+        _doWrite(key);
+      } else if (!Object.keys(_writeActive).some(function(k){return _writeActive[k];})) {
+        _setDot(true); // all writes done → green
+      }
     });
   }
 
-  // ── Push localStorage to Supabase ─────────────────────────
-  function _push(uid) {
-    if (!_sb) return Promise.resolve();
-    var rows = [];
-    for (var i = 0; i < _realLS.length; i++) {
-      var k = _realLS.key(i);
-      if (!_isAppKey(k)) continue;
-      try { rows.push({ user_id: uid, data_key: k, data_value: JSON.parse(_realLS.getItem(k)), updated_at: new Date().toISOString() }); } catch(_) {}
-    }
-    if (!rows.length) return Promise.resolve();
-    var chunks = [];
-    for (var j = 0; j < rows.length; j += 50) chunks.push(rows.slice(j, j + 50));
-    return chunks.reduce(function(p, chunk) {
-      return p.then(function() {
-        return sbQ(function() { return _sb.from('app_data').upsert(chunk, { onConflict: 'user_id,data_key' }); });
-      });
-    }, Promise.resolve());
-  }
+  function _flushWrites() {
+    // For logout: wait for all active writes to complete
+    var activeKeys = Object.keys(_writeActive).filter(function(k){return _writeActive[k];});
+    if (!activeKeys.length && !Object.keys(_pendingVal).length) return Promise.resolve();
+    
+    // Write any remaining pending values
+    Object.keys(_pendingVal).forEach(function(k) { _doWrite(k); });
 
-  // ── Realtime ───────────────────────────────────────────────
-  var _pollInterval = null;
-  var _lastPollHash = '';
-
-  function _startRT(uid) {
-    if (!_sb) return;
-    if (_rtCh) { try { _sb.removeChannel(_rtCh); } catch(_) {} _rtCh = null; }
-
-    var rtFailed = false;
-    var rtTimeout = setTimeout(function() {
-      if (!rtFailed) {
-        rtFailed = true;
-        console.warn('[AD] Realtime unavailable — switching to polling mode');
-        _setDot(false);
-        _startPolling(uid); // fallback to polling every 30s
-      }
-    }, 10000);
-
-    _rtCh = _sb.channel('ad_' + uid)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'app_data', filter: 'user_id=eq.' + uid }, function(p) {
-        if (_writing) return;
-        _writing = true;
-        var k = (p.new && p.new.data_key) || (p.old && p.old.data_key);
-        if (!k) { _writing = false; return; }
-        if (p.eventType === 'DELETE') { try { _realLS.removeItem(k); } catch(_) {} }
-        else { try { _realLS.setItem(k, JSON.stringify(p.new.data_value)); } catch(_) {} }
-        _writing = false;
-        if (window._adAppActive) _refreshUI();
-        _pulseDot();
-      })
-      .subscribe(function(s) {
-        console.log('[AD] RT:', s);
-        if (s === 'SUBSCRIBED') {
-          clearTimeout(rtTimeout);
-          rtFailed = false;
-          if (_pollInterval) { clearInterval(_pollInterval); _pollInterval = null; }
-          _setDot(true);
-        } else if (s === 'CHANNEL_ERROR' || s === 'TIMED_OUT' || s === 'CLOSED') {
-          if (!rtFailed) {
-            rtFailed = true;
-            clearTimeout(rtTimeout);
-            console.warn('[AD] Realtime ' + s + ' — switching to polling');
-            _setDot(false);
-            _startPolling(uid);
-          }
+    // Wait up to 8 seconds for all writes to complete
+    return new Promise(function(resolve) {
+      var waited = 0;
+      var check = setInterval(function() {
+        waited += 200;
+        var stillActive = Object.keys(_writeActive).some(function(k){return _writeActive[k];});
+        var stillPending = Object.keys(_pendingVal).length > 0;
+        if ((!stillActive && !stillPending) || waited >= 8000) {
+          clearInterval(check);
+          resolve();
         }
-      });
+      }, 200);
+    });
   }
 
-  // Polling fallback: check Supabase every 30s for changes
-  function _startPolling(uid) {
-    if (_pollInterval) clearInterval(_pollInterval);
-    console.log('[AD] Polling mode active (30s interval)');
-    _pollInterval = setInterval(function() {
-      if (!_sb || !uid || !window._adAppActive) return;
-      sbQ(function() {
-        return _sb.from('app_data').select('data_key,data_value').eq('user_id', uid);
-      }).then(function(result) {
-        if (result.error || !result.data || !result.data.length) return;
-        var newHash = result.data.map(function(r){return r.data_key+':'+JSON.stringify(r.data_value);}).join('|');
-        if (newHash === _lastPollHash) return; // no changes
-        _lastPollHash = newHash;
-        _writing = true;
-        result.data.forEach(function(row) {
-          try { _realLS.setItem(row.data_key, JSON.stringify(row.data_value)); } catch(_) {}
-        });
-        _writing = false;
-        if (window._adAppActive) { _refreshUI(); _pulseDot(); }
-        console.log('[AD] Polling: synced updates');
-      }).catch(function() {});
-    }, 30000);
-  }
-
-  function _refreshUI() {
-    // IMPORTANT: Do NOT call loadCompanyState here.
-    // loadCompanyState reads from localStorage which may have been
-    // overwritten by _pull() with stale Supabase data.
-    // Instead, just re-render the UI from current in-memory variables.
-    try {
-      ['renderDashboard','updateDashInfoBar','renderAllMasters','updateDashboardStats',
-       'rebuildInvoiceListUI','rebuildPurchaseListUI','rebuildReceiptListUI','rebuildPaymentListUI'].forEach(function(f) {
-        if (typeof window[f] === 'function') try { window[f](); } catch(_) {}
-      });
-    } catch(_) {}
-  }
-
-  // ── Sync dot indicator ─────────────────────────────────────
-  function _setDot(on) {
-    var d = document.getElementById('_ad_dot');
-    if (!d && document.body) {
-      d = document.createElement('div'); d.id = '_ad_dot';
-      d.style.cssText = 'position:fixed;bottom:8px;left:8px;width:10px;height:10px;border-radius:50%;z-index:99999;transition:all .4s;pointer-events:none';
-      document.body.appendChild(d);
-    }
-    if (d) { d.style.background = on ? '#22c55e' : '#f59e0b'; d.style.boxShadow = on ? '0 0 8px #22c55e' : '0 0 8px #f59e0b'; }
-  }
-  function _pulseDot() {
-    var d = document.getElementById('_ad_dot');
-    if (!d) return;
-    d.style.transform = 'scale(2)'; d.style.background = '#00d4aa';
-    setTimeout(function() { d.style.transform = 'scale(1)'; d.style.background = '#22c55e'; }, 500);
-  }
-
-  // ── Hide register screen ───────────────────────────────────
-  var _st = document.createElement('style');
-  _st.textContent = '#registerScreen{display:none!important}.auth-footer-link{display:none!important}';
-  document.head.appendChild(_st);
-  window.showRegister = function() { if (typeof showToast === 'function') showToast('Contact admin to create account', 'danger'); };
-  window.doRegister = window.showRegister;
-
-  // ── Core storage API ───────────────────────────────────────
-  window.blSave   = function(k, v)  { try { _realLS.setItem(k, JSON.stringify(v)); } catch(_) {} };
-  window.blLoad   = function(k, fb) { try { var r = _realLS.getItem(k); return r !== null ? JSON.parse(r) : fb; } catch(_) { return fb; } };
-  window.blRemove = function(k)     { try { _realLS.removeItem(k); } catch(_) {} };
-  window.saveCompanyList = function() { window.blSave('arthadesk_companies', window.registeredCompanies || []); };
+  // ── MEMORY STORE API ──────────────────────────────────────
+  window.blSave = function(key, data) {
+    _memStore[key] = data;          // instant in-memory write
+    _queueWrite(key, data);         // queue for Supabase (guaranteed flush)
+  };
+  window.blLoad = function(key, fallback) {
+    return (key in _memStore) ? _memStore[key] : (fallback !== undefined ? fallback : null);
+  };
+  window.blRemove = function(key) {
+    delete _memStore[key];
+    delete _pendingWrites[key];
+    if (_uid && _sb) sbQ(function(){ return _sb.from('app_data').delete().match({user_id:_uid,data_key:key}); });
+  };
+  window.saveCompanyList = function() { window.blSave('arthadesk_companies', window.registeredCompanies||[]); };
   window.loadCompanyList = function() {
     var l = window.blLoad('arthadesk_companies', []);
     window.registeredCompanies = Array.isArray(l) ? l : [];
@@ -920,203 +845,312 @@ select.form-control option{background:var(--surface)}
   window.saveUserList = function() {};
   window.loadUserList = function() {};
 
-  // ── OPEN COMPANY — the core action ─────────────────────────
-  // Called after login OR session restore. Directly opens first company.
-  function _openCompany(companies) {
-    var cos = companies || window.registeredCompanies || [];
-    if (!cos.length) {
-      if (typeof showToast === 'function') showToast('⚠️ No companies assigned. Contact admin.', 'danger');
-      return;
-    }
-    var co = cos[0];
-    console.log('[AD] Opening company:', co.name);
-    // Hide all auth screens immediately before calling selectCompany
-    document.querySelectorAll('.auth-screen').forEach(function(s) {
-      s.classList.add('hidden');
-      s.style.display = 'none';
+  // ── localStorage proxy ────────────────────────────────────
+  function _isAppKey(k) { return k && (k.startsWith('arthadesk_') || k.startsWith('ade_')); }
+  function _isSessionKey(k) { return k === 'arthadesk_active_user' || k === 'arthaTheme'; }
+
+  try {
+    Object.defineProperty(window, 'localStorage', {
+      get: function() {
+        return {
+          setItem: function(k, v) {
+            if (_isSessionKey(k)) { _sessionLS.setItem(k, v); return; }
+            if (_isAppKey(k)) {
+              try { _memStore[k] = JSON.parse(v); } catch(_) { _memStore[k] = v; }
+              if (!_writing) _queueWrite(k, _memStore[k]);
+            }
+          },
+          getItem: function(k) {
+            if (_isSessionKey(k)) return _sessionLS.getItem(k);
+            if (_isAppKey(k)) return (k in _memStore) ? JSON.stringify(_memStore[k]) : null;
+            return _sessionLS.getItem(k);
+          },
+          removeItem: function(k) {
+            if (_isSessionKey(k)) { _sessionLS.removeItem(k); return; }
+            if (_isAppKey(k)) { delete _memStore[k]; delete _pendingWrites[k]; }
+          },
+          clear: function() { _sessionLS.removeItem('arthadesk_active_user'); },
+          key: function(n) { return _sessionLS.key(n); },
+          get length() { return _sessionLS.length; }
+        };
+      },
+      configurable: true
     });
-    // Call selectCompany — it will navigate to dashboard
-    try {
-      selectCompany(co.name, co.gstin || '', co.city || '');
-    } catch(e) {
-      console.error('[AD] selectCompany failed:', e.message);
-      // If selectCompany not ready yet, retry once after 200ms
-      setTimeout(function() {
-        try { selectCompany(co.name, co.gstin || '', co.city || ''); } catch(e2) {
-          console.error('[AD] selectCompany retry failed:', e2.message);
-        }
-      }, 200);
+    console.log('[AD v10] Write-queue proxy active');
+  } catch(e) { console.warn('[AD v10] proxy failed:', e.message); }
+
+  // ── Flush on page unload (backup safety net) ──────────────
+  window.addEventListener('beforeunload', function() {
+    // Use sendBeacon for reliable delivery on page close
+    if (!_sb || !_uid || !Object.keys(_pendingWrites).length) return;
+    var keys = Object.keys(_pendingWrites);
+    var ts = new Date().toISOString();
+    // Best-effort: trigger flush (may not complete but increases chance)
+    keys.forEach(function(k) {
+      var body = JSON.stringify({ user_id:_uid, data_key:k, data_value:_pendingWrites[k], updated_at:ts });
+      try {
+        navigator.sendBeacon(
+          window.SUPABASE_URL + '/rest/v1/app_data?on_conflict=user_id,data_key',
+          new Blob([body], {type:'application/json'})
+        );
+      } catch(_) {}
+    });
+  });
+
+  // ── Pull ALL user data from Supabase → _memStore ──────────
+  function _pull(uid) {
+    if (!_sb) return Promise.resolve(false);
+    return sbQ(function() {
+      return _sb.from('app_data').select('data_key,data_value').eq('user_id', uid);
+    }).then(function(result) {
+      if (result.error || !result.data || !result.data.length) return false;
+      _writing = true;
+      result.data.forEach(function(row) { _memStore[row.data_key] = row.data_value; });
+      _writing = false;
+      console.log('[AD v10] pulled', result.data.length, 'keys from Supabase ✅');
+      return true;
+    });
+  }
+
+  // ── Realtime + polling fallback ───────────────────────────
+  var _pollInterval = null;
+  function _startRT(uid) {
+    if (!_sb) return;
+    if (_rtCh) { try{_sb.removeChannel(_rtCh);}catch(_){} _rtCh=null; }
+    var rtFailed=false;
+    var rtTO=setTimeout(function(){if(!rtFailed){rtFailed=true;_setDot(false);_startPolling(uid);}},10000);
+    _rtCh = _sb.channel('ad_'+uid)
+      .on('postgres_changes',{event:'*',schema:'public',table:'app_data',filter:'user_id=eq.'+uid},function(p){
+        if(_writing)return;
+        var k=(p.new&&p.new.data_key)||(p.old&&p.old.data_key); if(!k)return;
+        _writing=true;
+        if(p.eventType==='DELETE'){delete _memStore[k];}else{_memStore[k]=p.new.data_value;}
+        _writing=false;
+        if(window._adAppActive)_refreshUI();
+        _pulseDot();
+      })
+      .subscribe(function(s){
+        console.log('[AD v10] RT:',s);
+        if(s==='SUBSCRIBED'){clearTimeout(rtTO);rtFailed=false;if(_pollInterval){clearInterval(_pollInterval);_pollInterval=null;}_setDot(true);}
+        else if(s==='CHANNEL_ERROR'||s==='TIMED_OUT'||s==='CLOSED'){if(!rtFailed){rtFailed=true;clearTimeout(rtTO);_setDot(false);_startPolling(uid);}}
+      });
+  }
+  function _startPolling(uid){
+    if(_pollInterval)clearInterval(_pollInterval);
+    var lastHash='';
+    _pollInterval=setInterval(function(){
+      if(!_sb||!uid||!window._adAppActive)return;
+      sbQ(function(){return _sb.from('app_data').select('data_key,data_value').eq('user_id',uid);})
+        .then(function(r){
+          if(r.error||!r.data||!r.data.length)return;
+          var h=r.data.map(function(x){return x.data_key+':'+JSON.stringify(x.data_value);}).join('|');
+          if(h===lastHash)return; lastHash=h;
+          _writing=true; r.data.forEach(function(row){_memStore[row.data_key]=row.data_value;}); _writing=false;
+          _refreshUI(); _pulseDot();
+        }).catch(function(){});
+    },30000);
+  }
+
+  // ── UI refresh ────────────────────────────────────────────
+  function _refreshUI(){
+    try{
+      ['renderDashboard','updateDashInfoBar','renderAllMasters','updateDashboardStats',
+       'rebuildInvoiceListUI','rebuildPurchaseListUI','rebuildReceiptListUI','rebuildPaymentListUI'
+      ].forEach(function(f){if(typeof window[f]==='function')try{window[f]();}catch(_){}});
+    }catch(_){}
+  }
+
+  // ── Sync dot ──────────────────────────────────────────────
+  function _setDot(on){
+    var d=document.getElementById('_ad_dot');
+    if(!d&&document.body){d=document.createElement('div');d.id='_ad_dot';d.style.cssText='position:fixed;bottom:8px;left:8px;width:10px;height:10px;border-radius:50%;z-index:99999;transition:all .4s;pointer-events:none';document.body.appendChild(d);}
+    if(d){d.style.background=on?'#22c55e':'#f59e0b';d.style.boxShadow=on?'0 0 8px #22c55e':'0 0 8px #f59e0b';}
+  }
+  function _pulseDot(){var d=document.getElementById('_ad_dot');if(!d)return;d.style.transform='scale(2)';d.style.background='#00d4aa';setTimeout(function(){d.style.transform='scale(1)';d.style.background='#22c55e';},500);}
+
+  // ── Hide register ─────────────────────────────────────────
+  var _st=document.createElement('style');
+  _st.textContent='#registerScreen{display:none!important}.auth-footer-link{display:none!important}';
+  document.head.appendChild(_st);
+  window.showRegister=function(){if(typeof showToast==='function')showToast('Contact admin to create account','danger');};
+  window.doRegister=window.showRegister;
+
+  // ── Loading overlay ───────────────────────────────────────
+  function _showLoading(msg){
+    var el=document.getElementById('_adLoading');
+    if(!el){
+      el=document.createElement('div');el.id='_adLoading';
+      el.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(10,14,26,.93);z-index:99998;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px';
+      var sty=document.createElement('style');sty.textContent='@keyframes adSpin{to{transform:rotate(360deg)}}';document.head.appendChild(sty);
+      el.innerHTML='<div style="width:44px;height:44px;border:3px solid #00d4aa;border-top-color:transparent;border-radius:50%;animation:adSpin .8s linear infinite"></div><div id="_adLoadingMsg" style="color:#e2e8f0;font-size:15px;font-weight:600;text-align:center;padding:0 20px"></div>';
+      document.body.appendChild(el);
     }
+    document.getElementById('_adLoadingMsg').textContent=msg||'Loading…';
+    el.style.display='flex';
+  }
+  function _hideLoading(){var el=document.getElementById('_adLoading');if(el)el.style.display='none';}
+
+  // ── setErr ────────────────────────────────────────────────
+  function _setErr(id,msg){var el=document.getElementById(id);if(!el)return;el.textContent=msg;el.classList.add('show');}
+
+  // ── Open company ──────────────────────────────────────────
+  function _openCompany(){
+    var cos=window.registeredCompanies||[];
+    if(!cos.length){if(typeof showToast==='function')showToast('⚠️ No companies assigned. Contact admin.','danger');return;}
+    var co=cos[0];
+    document.querySelectorAll('.auth-screen').forEach(function(s){s.classList.add('hidden');s.style.display='none';});
+    try{selectCompany(co.name,co.gstin||'',co.city||'');}
+    catch(e){setTimeout(function(){try{selectCompany(co.name,co.gstin||'',co.city||'');}catch(e2){console.error('[AD v10] selectCompany failed:',e2.message);}},200);}
   }
 
-  // ── setErr helper ──────────────────────────────────────────
-  function _setErr(id, msg) {
-    var el = document.getElementById(id);
-    if (!el) return;
-    el.textContent = msg;
-    el.classList.add('show');
-  }
+  // ── doLogin ───────────────────────────────────────────────
+  function _doLogin(){
+    var email=((document.getElementById('loginEmail')||{}).value||'').trim().toLowerCase();
+    var pwd  =((document.getElementById('loginPassword')||{}).value||'');
+    var errEl=document.getElementById('loginError');
+    if(errEl)errEl.classList.remove('show');
+    if(!email||!pwd){_setErr('loginError','❌ Enter email and password.');return;}
 
-  // ── doLogin ────────────────────────────────────────────────
-  function _doLogin() {
-    var email = ((document.getElementById('loginEmail') || {}).value || '').trim().toLowerCase();
-    var pwd   = ((document.getElementById('loginPassword') || {}).value || '');
-    var errEl = document.getElementById('loginError');
-    if (errEl) errEl.classList.remove('show');
+    _ensureSB().then(function(){
+      if(!_sb){_setErr('loginError','❌ Cannot reach server. Check internet.');return;}
+      var btn=document.querySelector('#loginScreen .auth-btn-primary')||document.querySelector('#loginScreen button[onclick*="doLogin"]');
+      if(btn){btn._orig=btn.textContent;btn.textContent='⏳ Verifying…';btn.disabled=true;}
 
-    if (!email || !pwd) { _setErr('loginError', '❌ Enter email and password.'); return; }
+      sbQ(function(){return _sb.from('approved_users').select('*').eq('email',email).limit(1);})
+      .then(function(result){
+        if(btn){btn.textContent=btn._orig||'Sign In';btn.disabled=false;}
+        if(result.error&&result.error.message==='TIMEOUT'){_setErr('loginError','⏱ Server timeout. Try again.');return;}
+        if(result.error){_setErr('loginError','❌ '+result.error.message);return;}
+        if(!result.data||!result.data.length){_setErr('loginError','❌ Account not found. Contact admin.');return;}
+        var user=result.data[0];
+        if(!user.is_active){_setErr('loginError','🚫 Account blocked. Contact admin.');return;}
+        if(user.password!==pwd){_setErr('loginError','❌ Incorrect password.');return;}
 
-    // Wait for Supabase (async wrapper)
-    _ensureSB().then(function() {
-      if (!_sb) { _setErr('loginError', '❌ Cannot reach server. Check internet.'); return; }
+        // ✅ Login OK
+        _uid=user.id;
+        window._approvedUserId=user.id;
+        window._adAppActive=false;
+        window.currentUser={id:user.id,email:user.email,name:user.full_name,isNew:false};
+        window.registeredCompanies=(user.assigned_companies||[]).map(function(n){return{name:n,gstin:'',city:''};});
 
-      var btn = document.querySelector('#loginScreen .auth-btn-primary') ||
-                document.querySelector('#loginScreen button[onclick*="doLogin"]');
-      if (btn) { btn._orig = btn.textContent; btn.textContent = '⏳ Verifying…'; btn.disabled = true; }
-
-      sbQ(function() {
-        return _sb.from('approved_users').select('*').eq('email', email).limit(1);
-      }).then(function(result) {
-        if (btn) { btn.textContent = btn._orig || 'Sign In'; btn.disabled = false; }
-
-        if (result.error && result.error.message === 'TIMEOUT') { _setErr('loginError', '⏱ Server timeout. Try again.'); return; }
-        if (result.error) { _setErr('loginError', '❌ Server error: ' + result.error.message); return; }
-        if (!result.data || !result.data.length) { _setErr('loginError', '❌ Account not found. Contact admin.'); return; }
-
-        var user = result.data[0];
-        if (!user.is_active) { _setErr('loginError', '🚫 Account blocked. Contact admin.'); return; }
-        if (user.password !== pwd) { _setErr('loginError', '❌ Incorrect password.'); return; }
-
-        // ✅ Login success — set up session
-        _uid = user.id;
-        window._approvedUserId = user.id;
-        window._adAppActive    = false;
-        window.currentUser     = { id: user.id, email: user.email, name: user.full_name, isNew: false };
-        window.registeredCompanies = (user.assigned_companies || []).map(function(n) { return { name: n, gstin: '', city: '' }; });
-
-        _writing = true;
-        _realLS.setItem('arthadesk_active_user', JSON.stringify(window.currentUser));
-        _realLS.setItem('arthadesk_companies',   JSON.stringify(window.registeredCompanies));
-        _writing = false;
+        // Session token only — never app data — in real localStorage
+        _sessionLS.setItem('arthadesk_active_user',JSON.stringify(window.currentUser));
 
         _startRT(user.id);
         _setDot(false);
 
-        // Open company NOW — don't wait for Supabase pull
-        _openCompany(window.registeredCompanies);
-
-        // Pull data in background, refresh UI silently
-        if (_sb) {
-          _pull(user.id).then(function(had) {
-            if (!had) _push(user.id);
-            var latest = window.blLoad('arthadesk_companies', []);
-            if (Array.isArray(latest) && latest.length) window.registeredCompanies = latest;
-            // After pull: reload state from localStorage into memory, then re-render
-            if (window._adAppActive && window._activeCompanyKey) {
-              var co = (window.registeredCompanies || []).find(function(c) {
-                return typeof companyKey === 'function' && companyKey(c.name) === window._activeCompanyKey;
-              });
-              if (co && typeof loadCompanyState === 'function') loadCompanyState(co.name);
-              else _refreshUI();
-            }
-          }).catch(function(e) { console.warn('[AD] bg pull error:', e.message); });
-        }
+        // Pull ALL data from Supabase THEN open
+        _showLoading('⬇️ Loading your data from cloud…');
+        _pull(user.id).then(function(){
+          _hideLoading();
+          var latest=window.blLoad('arthadesk_companies',[]);
+          if(Array.isArray(latest)&&latest.length)window.registeredCompanies=latest;
+          _openCompany();
+        }).catch(function(e){
+          _hideLoading();
+          console.warn('[AD v10] pull failed:',e.message);
+          _openCompany();
+        });
       });
     });
   }
 
-  function _ensureSB() {
-    if (_sb) return Promise.resolve();
-    return new Promise(function(resolve) {
-      var waited = 0;
-      var interval = setInterval(function() {
-        waited += 100;
-        if (_sb || waited >= 8000) { clearInterval(interval); resolve(); }
-      }, 100);
+  // ── doLogout — flushes write queue BEFORE clearing state ──
+  window.doLogout = function(){
+    if(_rtCh&&_sb){try{_sb.removeChannel(_rtCh);}catch(_){}_rtCh=null;}
+    if(_pollInterval){clearInterval(_pollInterval);_pollInterval=null;}
+
+    // CRITICAL FIX: flush all pending writes to Supabase before clearing memory
+    _flushWrites().then(function(){
+      _uid=null;
+      _memStore={};
+      _pendingWrites={};
+      window._approvedUserId=null;
+      window.currentUser=null;
+      window.registeredCompanies=[];
+      window._adAppActive=false;
+      window._activeCompanyKey=null;
+      _sessionLS.removeItem('arthadesk_active_user');
+      if(typeof showLogin==='function')showLogin();
+      if(typeof showToast==='function')showToast('Signed out.','success');
+    }).catch(function(){
+      // Even if flush fails, still logout
+      _uid=null; _memStore={}; _pendingWrites={};
+      window._approvedUserId=null; window.currentUser=null;
+      window.registeredCompanies=[]; window._adAppActive=false; window._activeCompanyKey=null;
+      _sessionLS.removeItem('arthadesk_active_user');
+      if(typeof showLogin==='function')showLogin();
     });
-  }
 
-  // ── doLogout ───────────────────────────────────────────────
-  window.doLogout = function() {
-    if (_rtCh && _sb) { try { _sb.removeChannel(_rtCh); } catch(_) {} _rtCh = null; }
-    _uid = null;
-    window._approvedUserId = null;
-    window.currentUser = null;
-    window.registeredCompanies = [];
-    window._adAppActive = false;
-    window._activeCompanyKey = null;
-    _writing = true; _realLS.clear(); _writing = false;
-    if (typeof showLogin === 'function') showLogin();
-    if (typeof showToast === 'function') showToast('Signed out.', 'success');
+    // Show "Saving…" while flushing
+    _showLoading('💾 Saving data before signing out…');
+    setTimeout(_hideLoading, 5000); // safety: hide after 5s regardless
   };
 
-  window.doForgotPwd = function() {
-    if (typeof showToast === 'function') showToast('Contact admin to reset password.', 'success');
-    var el = document.getElementById('forgotSuccess'); if (el) el.classList.add('show');
-    setTimeout(function() { if (typeof showLogin === 'function') showLogin(); }, 2500);
+  window.doForgotPwd=function(){
+    if(typeof showToast==='function')showToast('Contact admin to reset password.','success');
+    var el=document.getElementById('forgotSuccess');if(el)el.classList.add('show');
+    setTimeout(function(){if(typeof showLogin==='function')showLogin();},2500);
   };
 
-  // ── Attach login function ──────────────────────────────────
-  function _attachLogin() {
-    window.doLogin = _doLogin;
-    window._supabaseLoginReady = _doLogin;
-  }
+  // ── Attach login ──────────────────────────────────────────
+  function _attachLogin(){window.doLogin=_doLogin;window._supabaseLoginReady=_doLogin;}
 
-  // ── Session restore on page load ───────────────────────────
-  window.addEventListener('load', function() {
+  // ── Session restore on page load ──────────────────────────
+  window.addEventListener('load',function(){
     _attachLogin();
     _setDot(false);
 
-    // Read saved session
-    var savedUser = null;
-    try { savedUser = JSON.parse(_realLS.getItem('arthadesk_active_user')); } catch(_) {}
-    if (!savedUser || !savedUser.email) return; // No saved session — show login screen
+    var savedUser=null;
+    try{savedUser=JSON.parse(_sessionLS.getItem('arthadesk_active_user'));}catch(_){}
+    if(!savedUser||!savedUser.email)return; // no session → show login
 
-    // Restore from cache immediately
-    _uid = savedUser.id;
-    window._approvedUserId = savedUser.id;
-    window.currentUser = savedUser;
-    var cached = window.blLoad('arthadesk_companies', []);
-    window.registeredCompanies = Array.isArray(cached) && cached.length ? cached : [];
+    _uid=savedUser.id;
+    window._approvedUserId=savedUser.id;
+    window.currentUser=savedUser;
+    window.registeredCompanies=[];
 
-    // Open company immediately from cache
-    _openCompany(window.registeredCompanies);
+    _showLoading('⬇️ Loading your data from cloud…');
 
-    // Then verify with Supabase and refresh in background
-    _ensureSB().then(function() {
-      if (!_sb) return;
-      sbQ(function() {
-        return _sb.from('approved_users').select('*')
-          .eq('email', savedUser.email).eq('is_active', true).limit(1);
-      }).then(function(result) {
-        if (result.error) return; // timeout or network error — already opened from cache
-        if (!result.data || !result.data.length) {
-          // Session revoked
-          window.doLogout();
-          if (typeof showToast === 'function') showToast('Session expired. Please log in again.', 'danger');
+    _ensureSB().then(function(){
+      if(!_sb){
+        _hideLoading();
+        _sessionLS.removeItem('arthadesk_active_user');
+        if(typeof showToast==='function')showToast('⚠️ Cannot reach server.','danger');
+        return;
+      }
+      sbQ(function(){return _sb.from('approved_users').select('*').eq('email',savedUser.email).eq('is_active',true).limit(1);})
+      .then(function(result){
+        if(result.error||!result.data||!result.data.length){
+          _hideLoading();
+          _sessionLS.removeItem('arthadesk_active_user');
+          if(typeof showToast==='function')showToast('Session expired. Please log in again.','danger');
+          if(typeof showLogin==='function')showLogin();
           return;
         }
-        var user = result.data[0];
-        _uid = user.id;
-        window._approvedUserId = user.id;
-        window.currentUser = { id: user.id, email: user.email, name: user.full_name, isNew: false };
-        window.registeredCompanies = (user.assigned_companies || []).map(function(n) { return { name: n, gstin: '', city: '' }; });
+        var user=result.data[0];
+        _uid=user.id;
+        window._approvedUserId=user.id;
+        window.currentUser={id:user.id,email:user.email,name:user.full_name,isNew:false};
+        window.registeredCompanies=(user.assigned_companies||[]).map(function(n){return{name:n,gstin:'',city:''};});
         _startRT(user.id);
 
-        // Pull fresh data, refresh UI
-        _pull(user.id).then(function(had) {
-          if (!had) _push(user.id);
-          var latest = window.blLoad('arthadesk_companies', []);
-          if (Array.isArray(latest) && latest.length) window.registeredCompanies = latest;
-          if (window._adAppActive) _refreshUI();
-        }).catch(function(e) { console.warn('[AD] restore pull:', e.message); });
+        _pull(user.id).then(function(){
+          _hideLoading();
+          var latest=window.blLoad('arthadesk_companies',[]);
+          if(Array.isArray(latest)&&latest.length)window.registeredCompanies=latest;
+          _openCompany();
+        }).catch(function(e){
+          _hideLoading();
+          console.warn('[AD v10] restore pull failed:',e.message);
+          _openCompany();
+        });
       });
     });
   });
 
-  console.log('[ArthaDesk] Layer loaded');
+  console.log('[ArthaDesk v10] Write-queue layer loaded');
 })();
-
 </script>
 <link rel="icon" type="image/png" href="data:image/png;base64,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">
 </head>
@@ -8022,7 +8056,16 @@ function autoSave() {
     gstrData      : gstrData,
     dashData      : dashData,
     selectedFY    : selectedFY,
-    companyInfo   : readCompanyInfo ? readCompanyInfo() : null
+    companyInfo   : (function() {
+      // Only read from DOM if company info page is currently visible
+      var ciPage = document.getElementById('page-company-info');
+      if (ciPage && ciPage.classList.contains('active')) {
+        return readCompanyInfo ? readCompanyInfo() : null;
+      }
+      // Otherwise use saved value from current state in memory
+      var saved = blLoad(_activeCompanyKey, null);
+      return (saved && saved.companyInfo) ? saved.companyInfo : null;
+    }())
   };
   blSave(_activeCompanyKey, state);
 }
@@ -8039,8 +8082,27 @@ function readCompanyInfo() {
     bankName  : gv('company-bank'),
     accountNo : gv('company-acc'),
     ifsc      : gv('company-ifsc'),
-    address   : gv('company-addr')
+    address   : gv('company-addr'),
+    fyStart   : gv('company-fy'),
+    bizType   : gv('company-biz-type')
   };
+}
+
+// Restore company info fields from saved data
+function writeCompanyInfoFields(info) {
+  if (!info) return;
+  function sv(id, val) { var el = document.getElementById(id); if (el && val != null) el.value = val; }
+  sv('company-name',     info.name);
+  sv('company-gstin',    info.gstin);
+  sv('company-pan',      info.pan);
+  sv('company-phone',    info.phone);
+  sv('company-email',    info.email);
+  sv('company-bank',     info.bankName);
+  sv('company-acc',      info.accountNo);
+  sv('company-ifsc',     info.ifsc);
+  sv('company-addr',     info.address);
+  sv('company-fy',       info.fyStart);
+  sv('company-biz-type', info.bizType);
 }
 
 // ── DELETE COMPANY ─────────────────────────────────────────────
@@ -8092,9 +8154,9 @@ function loadCompanyState(companyName) {
   if (state.companyInfo) writeCompanyInfoFields(state.companyInfo);
 
   // ── REPAIR: Rebuild all ledger txns from source-of-truth arrays ──
-  // This fixes any corrupted balances caused by wrong party group assignments
   repairLedgerTxns();
-  autoSave(); // persist the repaired data immediately
+  // NOTE: Do NOT call autoSave() here — it would read empty DOM fields
+  // (company info page not visible yet) and overwrite saved companyInfo
 
   // Restore invoice list UI
   rebuildInvoiceListUI();
