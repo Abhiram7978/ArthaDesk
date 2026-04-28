@@ -1405,10 +1405,10 @@ select.form-control option{background:var(--surface)}
       </div>
       <div class="auth-section-title">Financial Year</div>
       <div class="fy-selector">
-        <button class="fy-btn" onclick="selectFY(this,'2023-24')">2023-24</button>
-        <button class="fy-btn" onclick="selectFY(this,'2024-25')">2024-25</button>
-        <button class="fy-btn" onclick="selectFY(this,'2025-26')">2025-26</button>
         <button class="fy-btn" onclick="selectFY(this,'2026-27')">2026-27</button>
+        <button class="fy-btn" onclick="selectFY(this,'2027-28')">2027-28</button>
+        <button class="fy-btn" onclick="selectFY(this,'2028-29')">2028-29</button>
+        <button class="fy-btn" onclick="selectFY(this,'2029-30')">2029-30</button>
       </div>
       <div class="auth-section-title">Books Beginning From</div>
       <div class="auth-input-group">
@@ -1765,10 +1765,10 @@ select.form-control option{background:var(--surface)}
           <div style="display:flex;gap:6px;align-items:center">
             <span style="font-size:11px;color:var(--text3)">Change FY:</span>
             <select id="dash-fy-select" onchange="onDashFYChange(this)" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer">
-              <option value="2023-24">2023-24</option>
-              <option value="2024-25">2024-25</option>
-              <option value="2025-26">2025-26</option>
               <option value="2026-27">2026-27</option>
+              <option value="2027-28">2027-28</option>
+              <option value="2028-29">2028-29</option>
+              <option value="2029-30">2029-30</option>
             </select>
           </div>
         </div>
@@ -2710,7 +2710,7 @@ select.form-control option{background:var(--surface)}
             <div class="form-group"><label class="form-label">Trade Name (if different)</label><input type="text" class="form-control" placeholder="Trade name"></div>
             <div class="form-group"><label class="form-label">GSTIN</label><input type="text" class="form-control" id="company-gstin" value="" maxlength="15" oninput="this.value=this.value.toUpperCase()"></div>
             <div class="form-group"><label class="form-label">PAN</label><input type="text" class="form-control" id="company-pan" value="" maxlength="10" oninput="this.value=this.value.toUpperCase()"></div>
-            <div class="form-group"><label class="form-label">Financial Year Start</label><select class="form-control" id="company-fy"><option>April 1, 2024</option><option>April 1, 2025</option></select></div>
+            <div class="form-group"><label class="form-label">Financial Year Start</label><select class="form-control" id="company-fy"><option value="2026-27">April 1, 2026</option><option value="2027-28">April 1, 2027</option><option value="2028-29">April 1, 2028</option><option value="2029-30">April 1, 2029</option></select></div>
             <div class="form-group"><label class="form-label">Business Type</label><select class="form-control" id="company-biz-type"><option>Proprietorship</option><option>Partnership</option><option>Private Ltd (Pvt Ltd)</option><option>LLP</option><option>OPC</option></select></div>
             <div class="form-group full"><label class="form-label">Registered Address</label><textarea class="form-control" id="company-addr" rows="2"></textarea></div>
             <div class="form-group"><label class="form-label">Phone</label><input type="text" class="form-control" id="company-phone" value=""></div>
@@ -4861,8 +4861,6 @@ function postInvoiceToLedger(inv) {
     creditLedger('CGST Payable', cgst, narr, date, inv.no, 'Sales');
     creditLedger('SGST Payable', sgst, narr, date, inv.no, 'Sales');
   }
-  debitLedger('Sundry Debtors', grand, narr, date, inv.no, 'Sales'); // aggregator
-
   // 2. PARTY MASTER — update/create party balance
   // If party is a vendor being invoiced → mark as Customer for this context
   var partyType = (party && party.type === 'Vendor') ? 'Both' : 'Customer';
@@ -4892,7 +4890,7 @@ function postInvoiceToLedger(inv) {
   dashData.sales       += grand;
   dashData.receivables += grand;
   dashData.gstLiability = gstrData.gstLiability;
-  dashData.netProfit    = dashData.sales - dashData.purchases;
+  // Note: netProfit computed accurately in updateDashboardStats() using FY data
 
   // 8. RENDER ALL MASTERS
   renderAllMasters();
@@ -4938,8 +4936,6 @@ function postPurchaseToMasters(pur) {
     if (sgst > 0) debitLedger('Input SGST', sgst, narr, date, pur.no, 'Purchase');
   }
   creditLedger(pur.vendor,         grand,   narr, date, pur.no, 'Purchase');
-  creditLedger('Sundry Creditors', grand,   narr, date, pur.no, 'Purchase'); // aggregator
-
   // If party is a customer being purchased from → mark as Both
   var partyType = (party && party.type === 'Customer') ? 'Both' : 'Vendor';
   postToPartyMaster(pur.vendor, pur.gstin, grand, 'Cr', partyType);
@@ -4962,7 +4958,7 @@ function postPurchaseToMasters(pur) {
   dashData.purchases   += grand;
   dashData.payables    += grand;
   dashData.gstLiability = gstrData.gstLiability;
-  dashData.netProfit    = dashData.sales - dashData.purchases;
+  // Note: netProfit computed accurately in updateDashboardStats() using FY data
 
   renderAllMasters();
   autoSave();
@@ -4987,7 +4983,6 @@ function postReceiptToMasters(rcv) {
   debitLedger(acct,           amt, narr, date, rcv.no, 'Receipt');
   ensurePartyLedger(rcv.party, partyGroup);
   creditLedger(rcv.party,     amt, narr, date, rcv.no, 'Receipt');
-  creditLedger(aggLedger,     amt, narr, date, rcv.no, 'Receipt');
 
   // Reduce outstanding receivable
   dashData.receivables = Math.max(0, dashData.receivables - amt);
@@ -5018,13 +5013,11 @@ function postPaymentToMasters(pmt) {
   creditLedger(acct, amt, narr, date, pmt.no, 'Payment');
   ensurePartyLedger(pmt.party, partyGroup);
   if (isCustomer) {
-    // Refund to customer → Cr Customer (increases our liability to them)
-    creditLedger(pmt.party, amt, narr, date, pmt.no, 'Payment');
-    debitLedger(aggLedger,  amt, narr, date, pmt.no, 'Payment');
+    // Refund to customer: Dr Customer (reduces their receivable with us), Cr Bank (already done)
+    debitLedger(pmt.party, amt, narr, date, pmt.no, 'Payment');
   } else {
     // Payment to vendor → Dr Vendor (reduces our payable)
-    debitLedger(pmt.party,  amt, narr, date, pmt.no, 'Payment');
-    debitLedger(aggLedger,  amt, narr, date, pmt.no, 'Payment');
+    debitLedger(pmt.party, amt, narr, date, pmt.no, 'Payment');
   }
 
   dashData.payables = Math.max(0, dashData.payables - amt);
@@ -5692,7 +5685,6 @@ function repairLedgerTxns() {
       if (sgst > 0) debitLedger('Input SGST', sgst, narr, date, pur.no, 'Purchase');
     }
     creditLedger(pur.vendor,         grand,   narr, date, pur.no, 'Purchase');
-    creditLedger('Sundry Creditors', grand,   narr, date, pur.no, 'Purchase');
   });
 
   // 3. Replay invoices
@@ -5715,7 +5707,6 @@ function repairLedgerTxns() {
       creditLedger('CGST Payable', cgst, narr, date, inv.no, 'Sales');
       creditLedger('SGST Payable', sgst, narr, date, inv.no, 'Sales');
     }
-    debitLedger('Sundry Debtors',   grand,   narr, date, inv.no, 'Sales');
   });
 
   // 4. Replay receipts — correct direction per party type
@@ -5735,7 +5726,6 @@ function repairLedgerTxns() {
     debitLedger(acct,          amt, narr, date, rcv.no, 'Receipt');
     ensureGroup(rcv.party, partyGroup);
     creditLedger(rcv.party,    amt, narr, date, rcv.no, 'Receipt');
-    creditLedger(partyGroup,   amt, narr, date, rcv.no, 'Receipt');
   });
 
   // 5. Replay payments — correct direction per party type
@@ -5756,11 +5746,9 @@ function repairLedgerTxns() {
     if (isCustomer) {
       // Refund to customer → Cr Customer (increases our liability to them)
       creditLedger(pmt.party,  amt, narr, date, pmt.no, 'Payment');
-      debitLedger(partyGroup,  amt, narr, date, pmt.no, 'Payment');
     } else {
       // Payment to vendor → Dr Vendor (reduces payable)
       debitLedger(pmt.party,   amt, narr, date, pmt.no, 'Payment');
-      debitLedger(partyGroup,  amt, narr, date, pmt.no, 'Payment');
     }
   });
 
@@ -7782,6 +7770,14 @@ function saveEditParty() {
 }
 
 function saveCompany() {
+  // Sync FY from company-fy to dashboard
+  var compFyEl = document.getElementById('company-fy');
+  if (compFyEl && compFyEl.value) {
+    selectedFY = compFyEl.value;
+    var dashFyEl = document.getElementById('dash-fy-select');
+    if (dashFyEl) dashFyEl.value = selectedFY;
+    updateFYDisplay();
+  }
   var name = (document.getElementById('company-name') || {}).value || '';
   if (name) {
     var el = document.getElementById('companyShort');
@@ -8103,6 +8099,20 @@ function writeCompanyInfoFields(info) {
   sv('company-addr',     info.address);
   sv('company-fy',       info.fyStart);
   sv('company-biz-type', info.bizType);
+  // Sync dashboard FY selector if fyStart is set
+  if (info.fyStart) {
+    var dashFyEl = document.getElementById('dash-fy-select');
+    if (dashFyEl) {
+      dashFyEl.value = info.fyStart;
+      if (dashFyEl.value !== info.fyStart) {
+        // Value not in options — add it
+        var opt = document.createElement('option');
+        opt.value = info.fyStart; opt.textContent = info.fyStart;
+        dashFyEl.appendChild(opt);
+        dashFyEl.value = info.fyStart;
+      }
+    }
+  }
 }
 
 // ── DELETE COMPANY ─────────────────────────────────────────────
@@ -8678,9 +8688,12 @@ function updateDashInfoBar() {
 // When user changes FY from dashboard dropdown
 function onDashFYChange(sel) {
   selectedFY = sel.value;
+  // Sync company-fy selector to match
+  var compFyEl = document.getElementById('company-fy');
+  if (compFyEl) compFyEl.value = sel.value;
   updateFYDisplay();
-  renderDashboard();   // recalc all stats + recent txns for new FY
-  renderAllMasters();  // also refresh financial statements
+  renderDashboard();
+  renderAllMasters();
   autoSave();
   showToast('Financial Year changed to FY ' + selectedFY, 'success');
 }
