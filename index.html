@@ -1950,7 +1950,7 @@ select.form-control option{background:var(--surface)}
             <div class="form-section-title">📦 Item Details</div>
             <div class="invoice-items-table-wrap">
             <table class="invoice-items-table" id="items-table">
-              <thead><tr><th>#</th><th style="min-width:200px">Item / Description</th><th style="min-width:80px">HSN Code</th><th>Qty</th><th>Unit</th><th>Rate (₹)</th><th>Disc %</th><th>GST %</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Amount (₹)</th><th></th></tr></thead>
+              <thead><tr><th>#</th><th style="min-width:200px">Product</th><th style="min-width:160px">Description</th><th style="min-width:80px">HSN Code</th><th>Qty</th><th>Unit</th><th>Rate (₹)</th><th>Disc %</th><th>GST %</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Amount (₹)</th><th></th></tr></thead>
               <tbody id="items-body"></tbody>
             </table>
             </div>
@@ -1962,7 +1962,7 @@ select.form-control option{background:var(--surface)}
               <div>
                 <div class="form-group">
                   <label class="form-label">Notes / Narration</label>
-                  <textarea class="form-control" rows="3" placeholder="Additional notes..."></textarea>
+                  <textarea class="form-control" id="inv-narration" rows="3" placeholder="Additional notes..."></textarea>
                 </div>
                 <div class="form-group" style="margin-top:10px">
                   <label class="form-label">Payment Mode</label>
@@ -3621,6 +3621,7 @@ function addItemRow() {
   row.innerHTML =
     '<td style="color:var(--text3);text-align:center;width:28px;font-weight:600">' + itemRowCount + '</td>' +
     '<td><select class="form-control item-name" style="background:var(--surface2);min-width:200px;color:var(--text)" onchange="onSalesItemChange(this)">' + buildStockOptions('') + '</select></td>' +
+    '<td><input class="form-control item-desc" style="background:var(--surface2);min-width:160px;color:var(--text)" placeholder="Product description..."></td>' +
     '<td><input class="form-control item-hsn" style="background:var(--surface3);width:80px;cursor:not-allowed" placeholder="HSN" name="hsn" readonly></td>' +
     '<td><input type="number" class="form-control item-qty" style="background:transparent;width:60px" placeholder="1" min="0" step="any" value="1" oninput="calcRow(this)"></td>' +
     '<td><select class="form-control item-unit" style="background:var(--surface3);width:90px;cursor:not-allowed" disabled>' + buildUQCOptions('NOS') + '</select></td>' +
@@ -3630,7 +3631,12 @@ function addItemRow() {
     '<td class="mono item-cgst" data-val="0" style="width:80px;color:var(--text3)">&#x20B9; 0.00</td>' +
     '<td class="mono item-sgst" data-val="0" style="width:80px;color:var(--text3)">&#x20B9; 0.00</td>' +
     '<td class="mono item-igst" data-val="0" style="width:80px;color:var(--text3)">&#x20B9; 0.00</td>' +
-    '<td class="mono item-total" data-val="0" style="width:90px;color:var(--success);font-weight:700">&#x20B9; 0.00</td>' +
+    '<td class="mono item-total" data-val="0" style="width:110px;color:var(--success);font-weight:700;padding:2px 4px">' +
+    '<div style="display:flex;align-items:center;gap:2px">' +
+    '<span style="color:var(--text3);font-size:11px;user-select:none">&#x20B9;</span>' +
+    '<input type="number" class="item-total-input" style="background:transparent;border:none;border-bottom:1px dashed rgba(0,212,170,.6);color:var(--success);font-weight:700;width:82px;font-size:inherit;padding:0 2px;text-align:right" placeholder="0.00" min="0" step="any" title="Enter total to auto-calculate rate" oninput="calcRowReverse(this)">' +
+    '</div>' +
+    '</td>' +
     '<td><button onclick="this.closest(\'tr\').remove();renumberRows();calcTotals();" style="background:var(--danger);color:#fff;border-radius:4px;padding:4px 8px;font-size:12px;line-height:1">&#x2715;</button></td>';
   tbody.appendChild(row);
   var sel = row.querySelector('.item-name');
@@ -4077,7 +4083,58 @@ function calcRow(el) {
   setCell('.item-cgst',  stype==='inter'?0:cgst,  stype==='inter'?0:cgst);
   setCell('.item-sgst',  stype==='inter'?0:sgst,  stype==='inter'?0:sgst);
   setCell('.item-igst',  stype==='intra'?0:igst,  stype==='intra'?0:igst);
-  setCell('.item-total', total);
+  // Update the editable total input (only if user isn't actively typing in it)
+  var totalTd = q('.item-total');
+  if (totalTd) {
+    totalTd.setAttribute('data-val', total);
+    var totalInput = totalTd.querySelector('.item-total-input');
+    if (totalInput && document.activeElement !== totalInput) {
+      totalInput.value = total > 0 ? total.toFixed(2) : '';
+    }
+  }
+
+  calcTotals();
+}
+
+function calcRowReverse(el) {
+  var row = el.closest('tr');
+  if (!row) return;
+  var total   = parseFloat(el.value) || 0;
+  var qty     = parseFloat((row.querySelector('.item-qty')  || {}).value) || 1;
+  var disc    = Math.min(100, Math.max(0, parseFloat((row.querySelector('.item-disc') || {}).value) || 0));
+  var gstRate = parseFloat((row.querySelector('.item-gst')  || {}).value) || 0;
+
+  // Reverse formula:
+  // total = taxable*(1+gst/100), taxable = gross*(1-disc/100), gross = qty*rate
+  // => rate = total / ((1+gst/100) * (1-disc/100) * qty)
+  var divisor = (1 + gstRate / 100) * (1 - disc / 100) * qty;
+  var rate = divisor > 0 ? round2(total / divisor) : 0;
+
+  var rateEl = row.querySelector('.item-rate');
+  if (rateEl) rateEl.value = rate > 0 ? rate : '';
+
+  // Keep data-val in sync
+  var totalTd = row.querySelector('.item-total');
+  if (totalTd) totalTd.setAttribute('data-val', round2(total));
+
+  // Recalculate GST cells without touching total input (avoids feedback loop)
+  var stype   = getSupplyType();
+  var gross   = round2(qty * rate);
+  var discAmt = round2(gross * disc / 100);
+  var taxable = round2(gross - discAmt);
+  var gstAmt  = round2(taxable * gstRate / 100);
+  var cgst    = round2(gstAmt / 2);
+  var sgst    = round2(gstAmt / 2);
+  var igst    = gstAmt;
+
+  function setTaxCell(cls, val) {
+    var td = row.querySelector(cls); if (!td) return;
+    td.innerHTML = '&#x20B9; ' + fmtN(val);
+    td.setAttribute('data-val', val);
+  }
+  setTaxCell('.item-cgst', stype === 'inter'  ? 0 : cgst);
+  setTaxCell('.item-sgst', stype === 'inter'  ? 0 : sgst);
+  setTaxCell('.item-igst', stype === 'intra'  ? 0 : igst);
 
   calcTotals();
 }
@@ -4423,17 +4480,19 @@ function saveInvoice() {
     var rate = rateEl  ? parseFloat(rateEl.value) || 0 : 0;
     if (!name || rate <= 0) return;
 
+    var descEl   = row.querySelector('.item-desc');
     var snapQty  = qtyEl  ? parseFloat(qtyEl.value)  || 0 : 0;
     var snapDisc = discEl ? parseFloat(discEl.value) || 0 : 0;
     var snapGst  = gstSel ? parseFloat(gstSel.value) || 0 : 0;
     var snapUnit = unitSel ? unitSel.value : 'Nos';
+    var snapDesc = descEl ? descEl.value.trim() : '';
     var snapCgst = cgstTd ? (parseFloat(cgstTd.getAttribute('data-val')) || 0) : 0;
     var snapSgst = sgstTd ? (parseFloat(sgstTd.getAttribute('data-val')) || 0) : 0;
     var snapIgst = igstTd ? (parseFloat(igstTd.getAttribute('data-val')) || 0) : 0;
     var snapTot  = totTd  ? (parseFloat(totTd.getAttribute('data-val'))  || 0) : 0;
     var snapTaxable = round2(snapQty * rate * (1 - snapDisc/100)); // taxable value before GST
     itemsSnap.push({
-      no: i + 1, name,
+      no: i + 1, name, desc: snapDesc,
       hsn:   hsnEl ? hsnEl.value.trim() || '-' : '-',
       qty:   snapQty, unit: snapUnit, rate,
       disc:  snapDisc, gst: snapGst,
@@ -4446,13 +4505,16 @@ function saveInvoice() {
     });
   });
 
+  // Read narration/notes
+  var narration = (document.getElementById('inv-narration') || {}).value || '';
+
   // Store invoice data
   var invoice = {
     no: invNum, date: displayDate, dueDate: dueDate,
     customer: customer, gstin: gstin, pos: posText,
     subtotal: subtotalVal, cgst: cgstVal, sgst: sgstVal, igst: igstVal,
     grand: grandTxt, grandVal: grandVal, items: itemsSnap,
-    supplyType: getSupplyType()
+    supplyType: getSupplyType(), narration: narration
   };
   invoices.push(invoice);
 
@@ -6993,6 +7055,9 @@ function resetInvoiceForm() {
   addItemRow();
   addItemRow();
   calcTotals();
+  // Clear narration field
+  var narrEl = document.getElementById('inv-narration');
+  if (narrEl) narrEl.value = '';
   // Set today's date (local time, not UTC)
   var dateEl = document.getElementById('inv-date');
   if (dateEl) { var _n=new Date(); dateEl.value=_n.getFullYear()+'-'+String(_n.getMonth()+1).padStart(2,'0')+'-'+String(_n.getDate()).padStart(2,'0'); }
@@ -7018,6 +7083,11 @@ function printInvoice(no, customer, total, invData) {
   var compIFSC  = gv('company-ifsc')  || '';
 
   var inv = invData || {};
+  // If no narration stored, fall back to reading live DOM field
+  if (!inv.narration) {
+    var liveNarr = document.getElementById('inv-narration');
+    if (liveNarr && liveNarr.value.trim()) inv.narration = liveNarr.value.trim();
+  }
   var items = (inv.items || []).slice(); // ← slice() to avoid mutating the stored invoice
   var supplyType = inv.supplyType || getSupplyType();
   var isInter = supplyType === 'inter';
@@ -7189,6 +7259,13 @@ function printInvoice(no, customer, total, invData) {
       '<strong>Amount in Words:</strong> Rupees ' + numToWords(printRounded) + ' Only' +
     '</div>' +
 
+    // Description / Narration (only shown if present)
+    (inv.narration ? (
+      '<div style="background:#f9f9f9;border:1px solid #ddd;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:12px">' +
+        '<strong>Description / Narration:</strong> ' + inv.narration +
+      '</div>'
+    ) : '') +
+
     // Terms & Signatures
     '<div style="font-size:11px;color:#555;margin-bottom:16px">' +
       '<strong>Terms & Conditions:</strong> Goods once sold will not be taken back. E. &amp; O.E. Payment due within 30 days.' +
@@ -7227,7 +7304,7 @@ function buildPrintItems() {
     var gst  = gstSel ? gstSel.value : '18';
     var hsn  = hsnEl  ? (hsnEl.value||'-') : '-';
     var unit = unitSel? unitSel.value : 'Nos';
-    var tot  = totTd  ? totTd.textContent : '&#x20B9; 0.00';
+    var tot  = totTd  ? ('&#x20B9; ' + fmtN(parseFloat(totTd.getAttribute('data-val'))||0)) : '&#x20B9; 0.00';
     html += '<tr style="border-bottom:1px solid #e0e0e0">' +
       '<td style="padding:7px 8px">' + (i++) + '</td>' +
       '<td style="padding:7px 8px;font-weight:600">' + name + '</td>' +
@@ -8033,6 +8110,19 @@ function companyKey(companyName) {
 
 // ── AUTO SAVE ─────────────────────────────────────────────────
 // Saves current company state to localStorage (proxy → Supabase)
+// Expose memStore for full backup export
+window._getMemStore = function() {
+  // Collect all arthadesk_ and ade_ keys from blLoad-able state
+  var result = {};
+  registeredCompanies.forEach(function(co) {
+    var key = companyKey(co.name);
+    var data = blLoad(key, null);
+    if (data) result[key] = data;
+  });
+  result['arthadesk_companies'] = registeredCompanies;
+  return result;
+};
+
 function autoSave() {
   if (!_activeCompanyKey) return;
   var state = {
@@ -8053,12 +8143,14 @@ function autoSave() {
     dashData      : dashData,
     selectedFY    : selectedFY,
     companyInfo   : (function() {
-      // Only read from DOM if company info page is currently visible
-      var ciPage = document.getElementById('page-company-info');
-      if (ciPage && ciPage.classList.contains('active')) {
-        return readCompanyInfo ? readCompanyInfo() : null;
+      // Always try to read from DOM first — fields exist even when the page
+      // is hidden (populated by writeCompanyInfoFields on every company open).
+      // This prevents companyInfo from being lost on sign-out.
+      if (readCompanyInfo) {
+        var info = readCompanyInfo();
+        if (info && info.name) return info;
       }
-      // Otherwise use saved value from current state in memory
+      // Fallback: previously saved value from memory store
       var saved = blLoad(_activeCompanyKey, null);
       return (saved && saved.companyInfo) ? saved.companyInfo : null;
     }())
@@ -9328,21 +9420,27 @@ function backupAllCompanies() {
                 today.getDate().toString().padStart(2,'0');
   var filename = 'ArthaDesk_FULL_BACKUP_' + dateStr + '.json';
 
-  // Export from IndexedDB (primary) with localStorage fallback
-  _idbExportAll(function(allData) {
-    var backup = {
-      _type:       'arthadesk_full_backup',
-      _version:    '2.0',
-      _exportedOn: today.toISOString(),
-      _storageEngine: _idbReady ? 'IndexedDB' : 'localStorage',
-      _companies:  registeredCompanies.map(function(c){ return c.name; }),
-      _totalKeys:  Object.keys(allData).length,
-      data:        allData
-    };
-    downloadJSON(backup, filename);
-    addBackupLogEntry('full', filename, 'All Companies');
-    showToast('Full backup downloaded: ' + filename, 'success');
-  });
+  // Export all app data from _memStore (Supabase-only architecture)
+  // _memStore contains all company data loaded from Supabase on login
+  var allData = {};
+  // Include all memory store keys
+  if (typeof window._getMemStore === 'function') {
+    allData = window._getMemStore();
+  }
+  // Also include companies list
+  allData['arthadesk_companies'] = registeredCompanies;
+
+  var backup = {
+    _type:       'arthadesk_full_backup',
+    _version:    '3.0',
+    _exportedOn: today.toISOString(),
+    _companies:  registeredCompanies.map(function(c){ return c.name; }),
+    _totalKeys:  Object.keys(allData).length,
+    data:        allData
+  };
+  downloadJSON(backup, filename);
+  addBackupLogEntry('full', filename, 'All Companies');
+  showToast('✅ Full backup downloaded: ' + filename, 'success');
 }
 
 
@@ -9533,44 +9631,116 @@ function restoreFromFile(input) {
     try {
       var backup = JSON.parse(e.target.result);
 
-      // Validate format
-      if (backup._type !== 'arthadesk_company_backup') {
-        showToast('❌ Invalid backup file. Please use a company backup (.json) file.', 'danger');
-        input.value = '';
-        return;
-      }
-
-      if (!confirm('Restore ' + backup._company + ' from backup? This will REPLACE all current data!')) {
+      // Validate — accept both company and full backup formats
+      if (backup._type !== 'arthadesk_company_backup' && backup._type !== 'arthadesk_full_backup') {
+        showToast('❌ Invalid backup file format.', 'danger');
         input.value = ''; return;
       }
 
-      // Write the backed-up state back
-      var targetKey = backup._key || companyKey(backup._company);
-      blSave(targetKey, backup.data);
+      var isFullBackup = backup._type === 'arthadesk_full_backup';
 
-      // Make sure the company is in the registered list
-      if (!registeredCompanies.find(function(rc){ return rc.name === backup._company; })) {
-        registeredCompanies.push({ name: backup._company, gstin: '', city: '' });
-        saveCompanyList();
-      }
+      // Show confirmation modal instead of confirm() which may be blocked on mobile
+      var compLabel = isFullBackup
+        ? 'ALL companies (' + (backup._companies || []).join(', ') + ')'
+        : (backup._company || 'Unknown company');
 
-      // If this is the currently open company, reload it
-      if (_activeCompanyKey === targetKey) {
-        loadCompanyState(backup._company);
-        renderDashboard();
-        renderAllMasters();
-      }
+      showConfirmModal(
+        '⚠️ Restore from Backup',
+        'Restore ' + compLabel + '?\n\nThis will REPLACE current data with backup from:\n' + backup._exportedOn,
+        function() { // onConfirm
+          try {
+            if (isFullBackup) {
+              // Restore all keys from full backup
+              var data = backup.data || {};
+              Object.keys(data).forEach(function(k) {
+                blSave(k, data[k]);
+              });
+              // Update companies list
+              if (Array.isArray(data['arthadesk_companies'])) {
+                registeredCompanies = data['arthadesk_companies'];
+                saveCompanyList();
+              } else if (Array.isArray(backup._companies)) {
+                // Try to restore from company names list
+                backup._companies.forEach(function(name) {
+                  if (!registeredCompanies.find(function(rc){ return rc.name === name; })) {
+                    registeredCompanies.push({ name: name, gstin: '', city: '' });
+                  }
+                });
+                saveCompanyList();
+              }
+              // Reload current company if still in list
+              if (_activeCompanyKey) {
+                var co = registeredCompanies.find(function(c){
+                  return typeof companyKey === 'function' && companyKey(c.name) === _activeCompanyKey;
+                });
+                if (co) { loadCompanyState(co.name); renderDashboard(); renderAllMasters(); }
+              }
+            } else {
+              // Company backup restore
+              var targetKey = backup._key || companyKey(backup._company);
+              blSave(targetKey, backup.data);
 
-      addBackupLogEntry('restore', file.name, backup._company);
-      showToast('✅ Data restored from: ' + file.name, 'success');
-      renderBackupLog();
-      updateBackupLastInfo();
+              // Restore selectedFY from backup if available
+              if (backup.data && backup.data.selectedFY) {
+                selectedFY = backup.data.selectedFY;
+                var fyEl = document.getElementById('dash-fy-select');
+                if (fyEl) fyEl.value = selectedFY;
+                updateFYDisplay();
+              }
+
+              // Add to company list if not present
+              if (!registeredCompanies.find(function(rc){ return rc.name === backup._company; })) {
+                registeredCompanies.push({ name: backup._company, gstin: '', city: '' });
+                saveCompanyList();
+              }
+
+              // Reload if this is the open company
+              if (_activeCompanyKey === targetKey) {
+                loadCompanyState(backup._company);
+                renderDashboard();
+                renderAllMasters();
+              }
+            }
+
+            addBackupLogEntry('restore', file.name, compLabel);
+            showToast('✅ Restored from: ' + file.name, 'success');
+            renderBackupLog();
+            updateBackupLastInfo();
+          } catch(err2) {
+            showToast('❌ Restore error: ' + err2.message, 'danger');
+          }
+        }
+      );
     } catch(err) {
-      showToast('❌ Error reading backup file: ' + err.message, 'danger');
+      showToast('❌ Error reading file: ' + err.message, 'danger');
     }
     input.value = '';
   };
   reader.readAsText(file);
+}
+
+// Confirmation modal (mobile-safe alternative to confirm())
+function showConfirmModal(title, message, onConfirm) {
+  var existing = document.getElementById('_confirmModal');
+  if (existing) existing.parentNode.removeChild(existing);
+
+  var modal = document.createElement('div');
+  modal.id = '_confirmModal';
+  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.7);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px';
+  modal.innerHTML =
+    '<div style="background:#1a2332;border:1px solid #2a3547;border-radius:16px;padding:24px;max-width:380px;width:100%">' +
+    '<div style="font-size:18px;font-weight:700;color:#e2e8f0;margin-bottom:12px">' + title + '</div>' +
+    '<div style="font-size:13px;color:#94a3b8;margin-bottom:20px;white-space:pre-line">' + message + '</div>' +
+    '<div style="display:flex;gap:10px">' +
+    '<button onclick="document.getElementById(\'_confirmModal\').remove()" style="flex:1;padding:12px;background:#2a3547;color:#e2e8f0;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">Cancel</button>' +
+    '<button id="_confirmOK" style="flex:1;padding:12px;background:#ef4444;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer">Restore</button>' +
+    '</div></div>';
+
+  document.body.appendChild(modal);
+  document.getElementById('_confirmOK').onclick = function() {
+    modal.remove();
+    onConfirm();
+  };
 }
 
 // ── RESTORE FULL BACKUP ───────────────────────────────────────
@@ -9586,24 +9756,34 @@ function restoreFullBackup(input) {
         input.value = ''; return;
       }
       var companies = backup._companies || [];
-      if (!confirm('Restore FULL BACKUP?\nCompanies: ' + companies.join(', ') + '\n\nThis will REPLACE ALL current data!')) {
-        input.value = ''; return;
-      }
-      var data = backup.data || {};
-      // Write to both localStorage + IndexedDB
-      _idbImportAll(data, function() {
-        loadCompanyList();
-        loadUserList();
-        if (_activeCompanyKey && blLoad(_activeCompanyKey, null)) {
-          var curName = registeredCompanies.find(function(rc) {
-            return companyKey(rc.name) === _activeCompanyKey;
-          });
-          if (curName) loadCompanyState(curName.name);
+      var label = companies.length ? companies.join(', ') : 'All companies';
+
+      showConfirmModal(
+        '⚠️ Restore Full Backup',
+        'Restore backup for: ' + label + '\n\nFrom: ' + (backup._exportedOn || 'unknown date') + '\n\nThis will REPLACE ALL current data!',
+        function() {
+          var data = backup.data || {};
+          // Write all keys to _memStore via blSave (Supabase-only architecture)
+          Object.keys(data).forEach(function(k) { blSave(k, data[k]); });
+          // Reload company list
+          if (Array.isArray(data['arthadesk_companies'])) {
+            registeredCompanies = data['arthadesk_companies'];
+            saveCompanyList();
+          }
+          loadCompanyList();
+          // Reload current open company if it exists in backup
+          if (_activeCompanyKey) {
+            var co = registeredCompanies.find(function(rc) {
+              return typeof companyKey === 'function' && companyKey(rc.name) === _activeCompanyKey;
+            });
+            if (co) { loadCompanyState(co.name); renderDashboard(); renderAllMasters(); }
+          }
+          addBackupLogEntry('full-restore', file.name, label);
+          showToast('✅ Full backup restored! ' + Object.keys(data).length + ' records loaded.', 'success');
+          renderBackupLog();
+          updateBackupLastInfo();
         }
-        addBackupLogEntry('full-restore', file.name, null);
-        showToast('✅ Full backup restored to IndexedDB! ' + Object.keys(data).length + ' records loaded.', 'success');
-        renderBackupLog();
-      });
+      );
     } catch(err) {
       showToast('❌ Error reading backup file: ' + err.message, 'danger');
     }
