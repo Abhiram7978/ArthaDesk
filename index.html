@@ -825,12 +825,21 @@ select.form-control option{background:var(--surface)}
   }
 
   // ── MEMORY STORE API ──────────────────────────────────────
+  window._memStore = _memStore;
+
   window.blSave = function(key, data) {
     _memStore[key] = data;          // instant in-memory write
     _queueWrite(key, data);         // queue for Supabase (guaranteed flush)
   };
   window.blLoad = function(key, fallback) {
-    return (key in _memStore) ? _memStore[key] : (fallback !== undefined ? fallback : null);
+    if (key in _memStore) {
+      var v = _memStore[key];
+      if (typeof v === 'string') {
+        try { v = JSON.parse(v); } catch(_) {}
+      }
+      return (v !== undefined && v !== null) ? v : fallback;
+    }
+    return fallback !== undefined ? fallback : null;
   };
   window.blRemove = function(key) {
     delete _memStore[key];
@@ -840,6 +849,7 @@ select.form-control option{background:var(--surface)}
   window.saveCompanyList = function() { window.blSave('arthadesk_companies', window.registeredCompanies||[]); };
   window.loadCompanyList = function() {
     var l = window.blLoad('arthadesk_companies', []);
+    if (typeof l === 'string') { try { l = JSON.parse(l); } catch(_) {} }
     window.registeredCompanies = Array.isArray(l) ? l : [];
   };
   window.saveUserList = function() {};
@@ -856,13 +866,20 @@ select.form-control option{background:var(--surface)}
           setItem: function(k, v) {
             if (_isSessionKey(k)) { _sessionLS.setItem(k, v); return; }
             if (_isAppKey(k)) {
-              try { _memStore[k] = JSON.parse(v); } catch(_) { _memStore[k] = v; }
+              var parsed = v;
+              if (typeof v === 'string') { try { parsed = JSON.parse(v); } catch(_) { parsed = v; } }
+              _memStore[k] = parsed;
               if (!_writing) _queueWrite(k, _memStore[k]);
             }
           },
           getItem: function(k) {
             if (_isSessionKey(k)) return _sessionLS.getItem(k);
-            if (_isAppKey(k)) return (k in _memStore) ? JSON.stringify(_memStore[k]) : null;
+            if (_isAppKey(k)) {
+              if (!(k in _memStore)) return null;
+              var val = _memStore[k];
+              if (val === null || val === undefined) return null;
+              return (typeof val === 'string') ? val : JSON.stringify(val);
+            }
             return _sessionLS.getItem(k);
           },
           removeItem: function(k) {
@@ -903,9 +920,22 @@ select.form-control option{background:var(--surface)}
     return sbQ(function() {
       return _sb.from('app_data').select('data_key,data_value').eq('user_id', uid);
     }).then(function(result) {
-      if (result.error || !result.data || !result.data.length) return false;
+      if (result.error) {
+        console.warn('[AD v10] pull error:', result.error.message || result.error);
+        return false;
+      }
+      if (!result.data || !result.data.length) {
+        console.log('[AD v10] pull: no data in Supabase for user', uid);
+        return false;
+      }
       _writing = true;
-      result.data.forEach(function(row) { _memStore[row.data_key] = row.data_value; });
+      result.data.forEach(function(row) {
+        var val = row.data_value;
+        if (typeof val === 'string') {
+          try { val = JSON.parse(val); } catch(_) {}
+        }
+        _memStore[row.data_key] = val;
+      });
       _writing = false;
       console.log('[AD v10] pulled', result.data.length, 'keys from Supabase ✅');
       return true;
@@ -924,7 +954,15 @@ select.form-control option{background:var(--surface)}
         if(_writing)return;
         var k=(p.new&&p.new.data_key)||(p.old&&p.old.data_key); if(!k)return;
         _writing=true;
-        if(p.eventType==='DELETE'){delete _memStore[k];}else{_memStore[k]=p.new.data_value;}
+        if(p.eventType==='DELETE'){
+          delete _memStore[k];
+        }else{
+          var val = p.new.data_value;
+          if (typeof val === 'string') {
+            try { val = JSON.parse(val); } catch(_) {}
+          }
+          _memStore[k] = val;
+        }
         _writing=false;
         if(window._adAppActive)_refreshUI();
         _pulseDot();
@@ -945,7 +983,15 @@ select.form-control option{background:var(--surface)}
           if(r.error||!r.data||!r.data.length)return;
           var h=r.data.map(function(x){return x.data_key+':'+JSON.stringify(x.data_value);}).join('|');
           if(h===lastHash)return; lastHash=h;
-          _writing=true; r.data.forEach(function(row){_memStore[row.data_key]=row.data_value;}); _writing=false;
+          _writing=true;
+          r.data.forEach(function(row){
+            var val = row.data_value;
+            if (typeof val === 'string') {
+              try { val = JSON.parse(val); } catch(_) {}
+            }
+            _memStore[row.data_key] = val;
+          });
+          _writing=false;
           _refreshUI(); _pulseDot();
         }).catch(function(){});
     },30000);
@@ -1669,6 +1715,7 @@ select.form-control option{background:var(--surface)}
       <div class="nav-item" onclick="navigate('stock-items')"><span class="nav-icon">📦</span> Stock Items</div>
       <div class="nav-item" onclick="navigate('parties')"><span class="nav-icon">🏢</span> Parties</div>
       <div class="nav-item" onclick="navigate('cost-centres')"><span class="nav-icon">🎯</span> Cost Centres</div>
+      <div class="nav-item" onclick="navigate('invoice-prefixes')"><span class="nav-icon">🏷️</span> Invoice Prefixes</div>
     </div>
     <div class="sidebar-section">
       <div class="sidebar-label">GST & Tax</div>
@@ -1765,6 +1812,9 @@ select.form-control option{background:var(--surface)}
           <div style="display:flex;gap:6px;align-items:center">
             <span style="font-size:11px;color:var(--text3)">Change FY:</span>
             <select id="dash-fy-select" onchange="onDashFYChange(this)" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer">
+              <option value="2023-24">2023-24</option>
+              <option value="2024-25">2024-25</option>
+              <option value="2025-26">2025-26</option>
               <option value="2026-27">2026-27</option>
               <option value="2027-28">2027-28</option>
               <option value="2028-29">2028-29</option>
@@ -1872,12 +1922,20 @@ select.form-control option{background:var(--surface)}
             <div class="form-section-title">🧾 New Sales Invoice</div>
             <div class="form-grid">
               <div class="form-group">
+                <label class="form-label" style="display:flex;justify-content:space-between;align-items:center">
+                  <span>Invoice Series / Prefix *</span>
+                  <a href="javascript:void(0)" onclick="navigate('invoice-prefixes')" style="font-size:11px;color:var(--accent);text-decoration:none;font-weight:600">⚙️ Manage Prefixes</a>
+                </label>
+                <select class="form-control" id="inv-prefix-select" onchange="onInvoicePrefixSelectChange(this.value)" style="background:var(--surface2);font-weight:600">
+                </select>
+              </div>
+              <div class="form-group">
                 <label class="form-label">Invoice Date</label>
                 <input type="date" class="form-control" id="inv-date" value="">
               </div>
               <div class="form-group">
                 <label class="form-label">Invoice No.</label>
-                <input type="text" class="form-control" id="inv-no" value="SI-001" readonly style="background:var(--surface3)">
+                <input type="text" class="form-control" id="inv-no" value="INV/001" readonly style="background:var(--surface3);font-weight:700;color:var(--accent)">
               </div>
               <div class="form-group">
                 <label class="form-label">Customer Name *</label>
@@ -2452,7 +2510,57 @@ select.form-control option{background:var(--surface)}
         </div>
       </div>
 
-      <!-- GSTR-1 -->
+      <!-- INVOICE PREFIXES -->
+      <div class="page" id="page-invoice-prefixes">
+        <!-- Stats Summary Cards -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-bottom:16px">
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;display:flex;align-items:center;gap:14px">
+            <div style="width:44px;height:44px;border-radius:10px;background:rgba(0,212,170,.12);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:22px">🏷️</div>
+            <div>
+              <div style="font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.5px">TOTAL SERIES</div>
+              <div style="font-size:20px;font-weight:700;color:var(--text)" id="pref-stat-count">0</div>
+            </div>
+          </div>
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;display:flex;align-items:center;gap:14px">
+            <div style="width:44px;height:44px;border-radius:10px;background:rgba(0,128,255,.12);color:var(--accent2);display:flex;align-items:center;justify-content:center;font-size:22px">⭐</div>
+            <div>
+              <div style="font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.5px">DEFAULT SERIES</div>
+              <div style="font-size:14px;font-weight:700;color:var(--accent2)" id="pref-stat-default">—</div>
+            </div>
+          </div>
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;display:flex;align-items:center;gap:14px">
+            <div style="width:44px;height:44px;border-radius:10px;background:rgba(245,197,24,.12);color:var(--gold);display:flex;align-items:center;justify-content:center;font-size:22px">🔢</div>
+            <div>
+              <div style="font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.5px">NEXT INVOICE PREVIEW</div>
+              <div style="font-size:15px;font-weight:700;color:var(--gold);font-family:monospace" id="pref-stat-next">—</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="table-card">
+          <div class="table-header">
+            <div class="table-title">🏷️ Multiple Invoice Prefixes & Series</div>
+            <input class="search-input" type="text" placeholder="🔍 Search prefix..." oninput="filterTable(this,'prefix-table')">
+            <button class="topbar-btn btn-primary" onclick="showAddInvoicePrefixModal()">+ Add New Series</button>
+          </div>
+          <table class="data-table" id="prefix-table">
+            <thead>
+              <tr>
+                <th>Series Name</th>
+                <th>Prefix</th>
+                <th>Suffix</th>
+                <th>Padding</th>
+                <th>Next Sequence</th>
+                <th>Next Invoice Preview</th>
+                <th>Status</th>
+                <th style="text-align:center">Action</th>
+              </tr>
+            </thead>
+            <tbody id="prefix-list-body">
+            </tbody>
+          </table>
+        </div>
+      </div>
       <div class="page" id="page-gstr1">
         <!-- Period Selector -->
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius2);padding:16px;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end">
@@ -2965,6 +3073,80 @@ select.form-control option{background:var(--surface)}
     <span style="font-size:22px;line-height:1">☰</span><span>More</span>
   </button>
 </nav>
+
+<!-- ADD / EDIT INVOICE PREFIX MODAL -->
+<div class="modal-overlay" id="invoicePrefixModal" style="display:none">
+  <div class="modal" style="max-width:540px">
+    <div class="modal-header">
+      <div class="modal-title" id="pref-modal-title">🏷️ Add Invoice Prefix Series</div>
+      <div class="modal-close" onclick="closeModal('invoicePrefixModal')">✕</div>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="pref-edit-id" value="">
+      
+      <div class="form-group">
+        <label class="form-label">Series / Voucher Name *</label>
+        <input type="text" class="form-control" id="pref-name" placeholder="e.g. Regular Tax Invoice (B2B), Retail Cash" oninput="updatePrefixLivePreview()">
+      </div>
+
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">Prefix String</label>
+          <input type="text" class="form-control" id="pref-prefix" placeholder="e.g. INV/, RET-, GST/" oninput="updatePrefixLivePreview()">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Suffix String (Optional)</label>
+          <input type="text" class="form-control" id="pref-suffix" placeholder="e.g. /26-27, -A" oninput="updatePrefixLivePreview()">
+        </div>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">Starting Serial No. *</label>
+          <input type="number" class="form-control" id="pref-start-no" value="1" min="1" oninput="onStartNoInput()">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Next Sequence No. *</label>
+          <input type="number" class="form-control" id="pref-current-no" value="1" min="1" oninput="updatePrefixLivePreview()">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Digits Padding</label>
+          <select class="form-control" id="pref-padding" onchange="updatePrefixLivePreview()">
+            <option value="1">1 (e.g. 1)</option>
+            <option value="2">2 (e.g. 01)</option>
+            <option value="3" selected>3 (e.g. 001)</option>
+            <option value="4">4 (e.g. 0001)</option>
+            <option value="5">5 (e.g. 00001)</option>
+            <option value="6">6 (e.g. 000001)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Live Preview Banner -->
+      <div style="background:var(--surface2);border:1px dashed var(--accent);border-radius:var(--radius);padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:12px;color:var(--text2);font-weight:600">Sample Invoice No Preview:</span>
+        <strong id="pref-preview-output" style="font-size:16px;color:var(--accent);font-family:monospace">INV/001</strong>
+      </div>
+
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;font-size:13px;color:var(--text);font-weight:600">
+          <input type="checkbox" id="pref-is-default" style="width:16px;height:16px;accent-color:var(--accent)">
+          Set as Default Invoice Series for new Sales Invoices
+        </label>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Notes / Description (Optional)</label>
+        <input type="text" class="form-control" id="pref-notes" placeholder="e.g. Used for online store invoices">
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:20px">
+        <button class="topbar-btn btn-secondary" onclick="closeModal('invoicePrefixModal')">Cancel</button>
+        <button class="topbar-btn btn-primary" onclick="saveInvoicePrefixModal()">💾 Save Series</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- ADD LEDGER MODAL -->
 <div class="modal-overlay" id="ledgerModal" style="display:none">
@@ -3483,6 +3665,9 @@ let masterParties = [];
 // Stock master
 let masterStock = [];
 
+// Invoice Prefix master
+let masterInvoicePrefixes = [];
+
 // GST accumulators
 let gstrData = {
   totalTaxable:0, totalCGST:0, totalSGST:0, totalIGST:0, totalGST:0, invoiceCount:0,
@@ -3539,7 +3724,7 @@ function navigate(page) {
     'dashboard':'Dashboard','sales-invoice':'Sales Invoice','purchase-invoice':'Purchase Invoice',
     'receipt-voucher':'Receipt Voucher','payment-voucher':'Payment Voucher','journal-entry':'Journal Entry',
     'debit-note':'Debit Note','credit-note':'Credit Note','ledgers':'Ledgers','stock-items':'Stock Items',
-    'parties':'Parties','cost-centres':'Cost Centres','gstr1':'GSTR-1','gstr2':'GSTR-2A/2B',
+    'parties':'Parties','cost-centres':'Cost Centres','invoice-prefixes':'Invoice Prefixes','gstr1':'GSTR-1','gstr2':'GSTR-2A/2B',
     'gstr3b':'GSTR-3B','tds-tcs':'TDS / TCS','profit-loss':'Profit & Loss','balance-sheet':'Balance Sheet',
     'trial-balance':'Trial Balance','cashflow':'Cash Flow','daybook':'Day Book','company':'Company Info','settings':'Settings',
     'contra-voucher':'Contra Voucher','outstanding':'Party Outstanding','audit-trail':'Audit Trail','period-lock':'Period Lock'
@@ -3549,8 +3734,12 @@ function navigate(page) {
   closeSidebar();
   updateMobileNavActive(page);
 
+  if (page === 'invoice-prefixes') {
+    renderInvoicePrefixesUI();
+  }
   if (page === 'sales-invoice') {
     showSection('inv-list');
+    populateInvoicePrefixDropdown();
     if (itemRowCount === 0) { addItemRow(); addItemRow(); }
   }
   if (page === 'tds-tcs') { showSection('tds-sec'); }
@@ -4437,10 +4626,24 @@ function saveInvoice() {
   var sgstVal     = '&#x20B9; ' + fmtN(sgstNum);
   var igstVal     = '&#x20B9; ' + fmtN(igstNum);
 
-  var invNum = 'SI-' + String(invoiceNo).padStart(3, '0');
+  ensureMasterInvoicePrefixes();
+  var prefSelect = document.getElementById('inv-prefix-select');
+  var selectedPrefId = prefSelect ? prefSelect.value : '';
+  var activePref = masterInvoicePrefixes.find(function(p) { return p.id === selectedPrefId; }) || masterInvoicePrefixes.find(function(p) { return p.isDefault; }) || masterInvoicePrefixes[0];
+
+  var invNum = formatInvoiceNoFromPrefix(activePref);
+
+  if (activePref) {
+    var startNo = parseInt(activePref.startingNo) || 1;
+    var curNo = parseInt(activePref.currentNo) || 1;
+    activePref.currentNo = Math.max(curNo, startNo) + 1;
+  }
   invoiceNo++;
+
   var invNoEl = document.getElementById('inv-no');
-  if (invNoEl) invNoEl.value = 'SI-' + String(invoiceNo).padStart(3, '0');
+  if (invNoEl && activePref) {
+    invNoEl.value = formatInvoiceNoFromPrefix(activePref);
+  }
 
   // Format date
   var displayDate = date;
@@ -5215,11 +5418,21 @@ const STATE_CODES = {
 
 function getStateCode(stateStr) {
   if (!stateStr) return '96'; // Other territory
-  // If format "37-Andhra Pradesh" extract code
-  var m = String(stateStr).match(/^(\d{2})/);
+  var s = String(stateStr).trim();
+  var m = s.match(/^(\d{2})/);
   if (m) return m[1].padStart(2,'0');
-  var code = STATE_CODES[stateStr.toLowerCase().trim()];
+  var m2 = s.match(/\((\d{1,2})\)$/);
+  if (m2) return m2[1].padStart(2,'0');
+  var clean = s.replace(/\s*\(\d{1,2}\)$/, '').trim();
+  var code = STATE_CODES[clean.toLowerCase()];
   return code ? String(code).padStart(2,'0') : '96';
+}
+
+function formatPOS(stateStr) {
+  if (!stateStr) return '96-Other Territory';
+  var code = getStateCode(stateStr);
+  var clean = String(stateStr).replace(/\s*\(\d{1,2}\)$/, '').replace(/^\d{2}-/, '').trim();
+  return code + '-' + clean;
 }
 
 function formatGSTRDate(dateStr) {
@@ -5307,48 +5520,33 @@ function renderGSTR1Page() {
     var gst = cgst + sgst + igst;
     var grand = parseRs(inv.grandVal);
     var isInter = inv.supplyType === 'inter';
-    var rate = 0;
-    if (inv.items && inv.items.length > 0) rate = parseFloat(inv.items[0].gst) || 0;
     var stateCode = getStateCode(inv.pos);
-    var posFormatted = stateCode + '-' + (inv.pos || 'Other Territory');
+    var posFormatted = formatPOS(inv.pos);
     var isB2B = inv.gstin && inv.gstin !== 'Unregistered' && inv.gstin.length === 15;
 
-    if (isB2B) {
-      // B2B
-      b2b.push({
-        gstin: inv.gstin, name: inv.customer,
-        invNo: inv.no, invDate: formatGSTRDate(inv.date),
-        invValue: grand, pos: posFormatted,
-        revCharge: 'N', appTaxRate: '', invType: 'Regular B2B', ecomGstin: '',
-        rate: rate, taxable: taxable, cess: 0,
-        cgst: cgst, sgst: sgst, igst: igst, isInter: isInter
-      });
-    } else {
-      // B2CS — aggregate by state+rate
-      var key = posFormatted + '|' + rate;
-      if (!b2cs[key]) b2cs[key] = { type:'OE', pos: posFormatted, rate: rate, appTaxRate:'', taxable:0, cess:0, ecomGstin:'' };
-      b2cs[key].taxable += taxable;
-    }
-    totalTax += taxable;
-    totalGST += gst;
-
-    // HSN aggregation — separate B2B and B2C maps
+    var rateGroups = {};
     var targetMap = isB2B ? hsnB2BMap : hsnB2CMap;
+
     (inv.items || []).forEach(function(item) {
+      var itemRate = parseFloat(item.gst) || 0;
+      var itemTaxable = item.taxableVal != null ? item.taxableVal : round2((parseFloat(item.qty)||1) * (parseFloat(item.rate)||0) * (1 - (parseFloat(item.disc)||0)/100));
+      var itemIGST = item.igstVal != null ? item.igstVal : (isInter ? round2(itemTaxable * itemRate / 100) : 0);
+      var itemCGST = item.cgstVal != null ? item.cgstVal : (!isInter ? round2(itemTaxable * itemRate / 200) : 0);
+      var itemSGST = item.sgstVal != null ? item.sgstVal : (!isInter ? round2(itemTaxable * itemRate / 200) : 0);
+
+      if (!rateGroups[itemRate]) {
+        rateGroups[itemRate] = { rate: itemRate, taxable: 0, igst: 0, cgst: 0, sgst: 0 };
+      }
+      rateGroups[itemRate].taxable += itemTaxable;
+      rateGroups[itemRate].igst += itemIGST;
+      rateGroups[itemRate].cgst += itemCGST;
+      rateGroups[itemRate].sgst += itemSGST;
+
       var hsn = (item.hsn && item.hsn !== '-') ? item.hsn : '9999';
       var qty = parseFloat(item.qty) || 1;
-      var gstRate = parseFloat(item.gst) || 0;
-      // Use stored taxableVal if available, else compute from qty/rate/disc
-      var itemTaxable = item.taxableVal != null
-        ? item.taxableVal
-        : round2((parseFloat(item.qty)||1) * (parseFloat(item.rate)||0) * (1 - (parseFloat(item.disc)||0)/100));
-      // Use stored per-item tax vals if available, else compute
-      var itemIGST = item.igstVal != null ? item.igstVal : (isInter ? round2(itemTaxable * gstRate / 100) : 0);
-      var itemCGST = item.cgstVal != null ? item.cgstVal : (!isInter ? round2(itemTaxable * gstRate / 200) : 0);
-      var itemSGST = item.sgstVal != null ? item.sgstVal : (!isInter ? round2(itemTaxable * gstRate / 200) : 0);
       if (!targetMap[hsn]) {
         targetMap[hsn] = { hsn, desc: item.name, uqc: (item.unit||'NOS').toUpperCase(),
-          qty:0, value:0, rate: gstRate, taxable:0, igst:0, cgst:0, sgst:0, cess:0 };
+          qty:0, value:0, rate: itemRate, taxable:0, igst:0, cgst:0, sgst:0, cess:0 };
       }
       targetMap[hsn].qty     += qty;
       targetMap[hsn].value   += itemTaxable;
@@ -5357,6 +5555,33 @@ function renderGSTR1Page() {
       targetMap[hsn].cgst    += itemCGST;
       targetMap[hsn].sgst    += itemSGST;
     });
+
+    if (Object.keys(rateGroups).length === 0) {
+      rateGroups[0] = { rate: 0, taxable: taxable, igst: igst, cgst: cgst, sgst: sgst };
+    }
+
+    if (isB2B) {
+      var idx = 0;
+      Object.values(rateGroups).forEach(function(rg) {
+        b2b.push({
+          gstin: inv.gstin, name: inv.customer,
+          invNo: inv.no, invDate: formatGSTRDate(inv.date),
+          invValue: idx === 0 ? grand : grand, pos: posFormatted,
+          revCharge: 'N', appTaxRate: '', invType: 'Regular B2B', ecomGstin: '',
+          rate: rg.rate, taxable: rg.taxable, cess: 0,
+          cgst: rg.cgst, sgst: rg.sgst, igst: rg.igst, isInter: isInter
+        });
+        idx++;
+      });
+    } else {
+      Object.values(rateGroups).forEach(function(rg) {
+        var key = posFormatted + '|' + rg.rate;
+        if (!b2cs[key]) b2cs[key] = { type:'OE', pos: posFormatted, rate: rg.rate, appTaxRate:'', taxable:0, cess:0, ecomGstin:'' };
+        b2cs[key].taxable += rg.taxable;
+      });
+    }
+    totalTax += taxable;
+    totalGST += gst;
   });
 
   // Update summary boxes
@@ -5478,10 +5703,8 @@ function exportGSTR1Excel() {
     var cgst = parseRs(inv.cgst), sgst = parseRs(inv.sgst), igst = parseRs(inv.igst);
     var grand = parseRs(inv.grandVal);
     var isInter = inv.supplyType === 'inter';
-    var rate = 0;
-    if (inv.items && inv.items.length > 0) rate = parseFloat(inv.items[0].gst) || 0;
     var stateCode = getStateCode(inv.pos);
-    var posFormatted = stateCode + '-' + (inv.pos || 'Other Territory');
+    var posFormatted = formatPOS(inv.pos);
     var invDate = formatGSTRDate(inv.date);
 
     // Document series tracking
@@ -5492,54 +5715,64 @@ function exportGSTR1Excel() {
     var isB2B = inv.gstin && inv.gstin !== 'Unregistered' && inv.gstin.length === 15;
     var hsnTarget = isB2B ? hsnB2BMap : hsnB2CMap;
 
-    if (isB2B) {
-      // Multiple line items = multiple rows per invoice in GSTR-1
-      if (inv.items && inv.items.length > 0) {
-        inv.items.forEach(function(item, idx) {
-          var itemTaxable = item.taxableVal != null ? item.taxableVal : round2((parseFloat(item.qty)||1) * (parseFloat(item.rate)||0) * (1 - (parseFloat(item.disc)||0)/100));
-          var itemRate    = parseFloat(item.gst) || 0;
-          var itemIGST    = item.igstVal != null ? item.igstVal : (isInter ? round2(itemTaxable * itemRate / 100) : 0);
-          var itemCGST    = item.cgstVal != null ? item.cgstVal : (!isInter ? round2(itemTaxable * itemRate / 200) : 0);
-          var itemSGST    = item.sgstVal != null ? item.sgstVal : (!isInter ? round2(itemTaxable * itemRate / 200) : 0);
-          b2bRows.push([
-            inv.gstin, inv.customer, inv.no, invDate,
-            idx === 0 ? grand : '', posFormatted, 'N', '', 'Regular B2B', '',
-            itemRate, itemTaxable, 0
-          ]);
-          var hsn = item.hsn || '9999';
-          if (!hsnTarget[hsn]) hsnTarget[hsn] = { hsn, desc: item.name, uqc: item.unit||'NOS', qty:0, value:0, rate: itemRate, taxable:0, igst:0, cgst:0, sgst:0 };
-          hsnTarget[hsn].qty += parseFloat(item.qty)||1;
-          hsnTarget[hsn].value += itemTaxable; hsnTarget[hsn].taxable += itemTaxable;
-          hsnTarget[hsn].igst += itemIGST; hsnTarget[hsn].cgst += itemCGST; hsnTarget[hsn].sgst += itemSGST;
-        });
-      } else {
-        b2bRows.push([inv.gstin, inv.customer, inv.no, invDate, grand, posFormatted, 'N', '', 'Regular B2B', '', rate, taxable, 0]);
-        var hsn = '9999';
-        if (!hsnTarget[hsn]) hsnTarget[hsn] = { hsn, desc:'Services/Goods', uqc:'NOS', qty:0, value:0, rate, taxable:0, igst:0, cgst:0, sgst:0 };
-        hsnTarget[hsn].qty++; hsnTarget[hsn].value += taxable; hsnTarget[hsn].taxable += taxable;
+    var rateGroups = {};
+    (inv.items || []).forEach(function(item) {
+      var itemRate = parseFloat(item.gst) || 0;
+      var itemTaxable = item.taxableVal != null ? item.taxableVal : round2((parseFloat(item.qty)||1) * (parseFloat(item.rate)||0) * (1 - (parseFloat(item.disc)||0)/100));
+      var itemIGST = item.igstVal != null ? item.igstVal : (isInter ? round2(itemTaxable * itemRate / 100) : 0);
+      var itemCGST = item.cgstVal != null ? item.cgstVal : (!isInter ? round2(itemTaxable * itemRate / 200) : 0);
+      var itemSGST = item.sgstVal != null ? item.sgstVal : (!isInter ? round2(itemTaxable * itemRate / 200) : 0);
+
+      if (!rateGroups[itemRate]) {
+        rateGroups[itemRate] = { rate: itemRate, taxable: 0, igst: 0, cgst: 0, sgst: 0 };
+      }
+      rateGroups[itemRate].taxable += itemTaxable;
+      rateGroups[itemRate].igst += itemIGST;
+      rateGroups[itemRate].cgst += itemCGST;
+      rateGroups[itemRate].sgst += itemSGST;
+
+      var hsn = (item.hsn && item.hsn !== '-') ? item.hsn : '9999';
+      var qty = parseFloat(item.qty) || 1;
+      if (!hsnTarget[hsn]) hsnTarget[hsn] = { hsn, desc: item.name, uqc: (item.unit||'NOS').toUpperCase(), qty:0, value:0, rate: itemRate, taxable:0, igst:0, cgst:0, sgst:0 };
+      hsnTarget[hsn].qty += qty;
+      hsnTarget[hsn].value += itemTaxable; hsnTarget[hsn].taxable += itemTaxable;
+      hsnTarget[hsn].igst += itemIGST; hsnTarget[hsn].cgst += itemCGST; hsnTarget[hsn].sgst += itemSGST;
+    });
+
+    if (Object.keys(rateGroups).length === 0) {
+      rateGroups[0] = { rate: 0, taxable: taxable, igst: igst, cgst: cgst, sgst: sgst };
+      var hsn = '9999';
+      if (!hsnTarget[hsn]) hsnTarget[hsn] = { hsn, desc: 'Services/Goods', uqc: 'NOS', qty:1, value:taxable, rate: 0, taxable:taxable, igst:igst, cgst:cgst, sgst:sgst };
+      else {
+        hsnTarget[hsn].qty += 1; hsnTarget[hsn].value += taxable; hsnTarget[hsn].taxable += taxable;
         hsnTarget[hsn].igst += igst; hsnTarget[hsn].cgst += cgst; hsnTarget[hsn].sgst += sgst;
       }
-    } else {
-      // B2C
-      if (grand > 250000 && isInter) {
-        b2clRows.push([inv.no, invDate, grand, posFormatted, '', rate, taxable, 0, '']);
-      } else {
-        var key = posFormatted + '|' + rate;
-        if (!b2csMap[key]) b2csMap[key] = { type:'OE', pos: posFormatted, rate, appTaxRate:'', taxable:0, cess:0, ecomGstin:'' };
-        b2csMap[key].taxable += taxable;
-      }
-      (inv.items || []).forEach(function(item) {
-        var itemTaxable = item.taxableVal != null ? item.taxableVal : round2((parseFloat(item.qty)||1) * (parseFloat(item.rate)||0) * (1 - (parseFloat(item.disc)||0)/100));
-        var itemRate    = parseFloat(item.gst) || 0;
-        var itemIGST    = item.igstVal != null ? item.igstVal : (isInter ? round2(itemTaxable * itemRate / 100) : 0);
-        var itemCGST    = item.cgstVal != null ? item.cgstVal : (!isInter ? round2(itemTaxable * itemRate / 200) : 0);
-        var itemSGST    = item.sgstVal != null ? item.sgstVal : (!isInter ? round2(itemTaxable * itemRate / 200) : 0);
-        var hsn = item.hsn || '9999';
-        if (!hsnTarget[hsn]) hsnTarget[hsn] = { hsn, desc: item.name, uqc: item.unit||'NOS', qty:0, value:0, rate: itemRate, taxable:0, igst:0, cgst:0, sgst:0 };
-        hsnTarget[hsn].qty += parseFloat(item.qty)||1;
-        hsnTarget[hsn].value += itemTaxable; hsnTarget[hsn].taxable += itemTaxable;
-        hsnTarget[hsn].igst += itemIGST; hsnTarget[hsn].cgst += itemCGST; hsnTarget[hsn].sgst += itemSGST;
+    }
+
+    if (isB2B) {
+      var idx = 0;
+      Object.values(rateGroups).forEach(function(rg) {
+        b2bRows.push([
+          inv.gstin, inv.customer, inv.no, invDate,
+          idx === 0 ? grand : '', posFormatted, 'N', '', 'Regular B2B', '',
+          rg.rate, rg.taxable, 0
+        ]);
+        idx++;
       });
+    } else {
+      if (grand > 250000 && isInter) {
+        var idx = 0;
+        Object.values(rateGroups).forEach(function(rg) {
+          b2clRows.push([inv.no, invDate, idx === 0 ? grand : '', posFormatted, '', rg.rate, rg.taxable, 0, '']);
+          idx++;
+        });
+      } else {
+        Object.values(rateGroups).forEach(function(rg) {
+          var key = posFormatted + '|' + rg.rate;
+          if (!b2csMap[key]) b2csMap[key] = { type:'OE', pos: posFormatted, rate: rg.rate, appTaxRate:'', taxable:0, cess:0, ecomGstin:'' };
+          b2csMap[key].taxable += rg.taxable;
+        });
+      }
     }
   });
 
@@ -5829,6 +6062,8 @@ function renderAllMasters() {
   renderLedgers();
   renderParties();
   renderStock();
+  renderInvoicePrefixesUI();
+  populateInvoicePrefixDropdown();
   renderGSTR1Summary();
   renderGSTR3B();
   renderGSTR2Summary();
@@ -5839,6 +6074,302 @@ function renderAllMasters() {
   rebuildStockDatalist();
   rebuildCustomerDatalist();
   rebuildVendorDatalist();
+}
+
+// ╔══════════════════════════════════════════════════════════════╗
+// ║       ARTHADESK — MULTIPLE INVOICE PREFIXES & SERIES        ║
+// ╚══════════════════════════════════════════════════════════════╝
+
+function getDefaultInvoicePrefixes() {
+  return [
+    {
+      id: 'pref_regular',
+      name: 'Regular Tax Invoice (B2B)',
+      prefix: 'INV/',
+      suffix: '',
+      startingNo: 1,
+      currentNo: 1,
+      padding: 3,
+      isDefault: true,
+      notes: 'Default series for B2B sales invoices'
+    },
+    {
+      id: 'pref_retail',
+      name: 'Retail Bill (B2C)',
+      prefix: 'RET/',
+      suffix: '',
+      startingNo: 1,
+      currentNo: 1,
+      padding: 3,
+      isDefault: false,
+      notes: 'Counter sales and retail customer bills'
+    },
+    {
+      id: 'pref_export',
+      name: 'Export Sales Series',
+      prefix: 'EXP/',
+      suffix: '/26-27',
+      startingNo: 1,
+      currentNo: 1,
+      padding: 3,
+      isDefault: false,
+      notes: 'Zero-rated export invoices'
+    }
+  ];
+}
+
+function ensureMasterInvoicePrefixes() {
+  if (!Array.isArray(masterInvoicePrefixes) || masterInvoicePrefixes.length === 0) {
+    masterInvoicePrefixes = getDefaultInvoicePrefixes();
+  }
+}
+
+function formatInvoiceNoFromPrefix(pref) {
+  if (!pref) return 'SI-' + String(invoiceNo).padStart(3, '0');
+  var startNo = parseInt(pref.startingNo) || 1;
+  var curNo = parseInt(pref.currentNo) || 1;
+  var seqNo = Math.max(curNo, startNo);
+  var numStr = String(seqNo).padStart(parseInt(pref.padding) || 3, '0');
+  return (pref.prefix || '') + numStr + (pref.suffix || '');
+}
+
+function renderInvoicePrefixesUI() {
+  ensureMasterInvoicePrefixes();
+  var tbody = document.getElementById('prefix-list-body');
+  if (!tbody) return;
+
+  var countEl = document.getElementById('pref-stat-count');
+  var defaultEl = document.getElementById('pref-stat-default');
+  var nextEl = document.getElementById('pref-stat-next');
+
+  if (countEl) countEl.textContent = masterInvoicePrefixes.length;
+
+  var defPref = masterInvoicePrefixes.find(function(p) { return p.isDefault; }) || masterInvoicePrefixes[0];
+  if (defaultEl && defPref) defaultEl.textContent = defPref.name;
+  if (nextEl && defPref) nextEl.textContent = formatInvoiceNoFromPrefix(defPref);
+
+  tbody.innerHTML = masterInvoicePrefixes.map(function(p) {
+    var preview = formatInvoiceNoFromPrefix(p);
+    var defaultBadge = p.isDefault 
+      ? '<span style="background:rgba(46,213,115,.15);color:var(--success);padding:4px 10px;border-radius:12px;font-size:11px;font-weight:700">★ Default</span>'
+      : '<button class="topbar-btn btn-secondary" onclick="setDefaultInvoicePrefix(\'' + p.id + '\')" style="padding:2px 8px;font-size:11px">Make Default</button>';
+
+    return '<tr>' +
+      '<td style="font-weight:600;color:var(--text)">' + escapeHTML(p.name) + 
+        (p.notes ? '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + escapeHTML(p.notes) + '</div>' : '') + '</td>' +
+      '<td style="font-family:monospace;color:var(--accent);font-weight:600">' + escapeHTML(p.prefix || '—') + '</td>' +
+      '<td style="font-family:monospace;color:var(--text2)">' + escapeHTML(p.suffix || '—') + '</td>' +
+      '<td>' + p.padding + ' digits</td>' +
+      '<td style="font-weight:700;color:var(--text)">' + Math.max(parseInt(p.currentNo)||1, parseInt(p.startingNo)||1) + '</td>' +
+      '<td style="font-family:monospace;font-weight:700;color:var(--gold)">' + preview + '</td>' +
+      '<td>' + defaultBadge + '</td>' +
+      '<td style="text-align:center">' +
+        '<button class="topbar-btn btn-secondary" onclick="showAddInvoicePrefixModal(\'' + p.id + '\')" style="padding:4px 8px;font-size:11px;margin-right:4px">✏️ Edit</button>' +
+        (masterInvoicePrefixes.length > 1 ? '<button class="topbar-btn btn-secondary" onclick="deleteInvoicePrefix(\'' + p.id + '\')" style="padding:4px 8px;font-size:11px;color:var(--danger)">🗑️</button>' : '') +
+      '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+function populateInvoicePrefixDropdown() {
+  ensureMasterInvoicePrefixes();
+  var sel = document.getElementById('inv-prefix-select');
+  if (!sel) return;
+
+  var currentVal = sel.value;
+  sel.innerHTML = masterInvoicePrefixes.map(function(p) {
+    var preview = formatInvoiceNoFromPrefix(p);
+    var label = p.name + ' (' + preview + ')' + (p.isDefault ? ' — Default' : '');
+    return '<option value="' + p.id + '">' + escapeHTML(label) + '</option>';
+  }).join('');
+
+  if (currentVal && masterInvoicePrefixes.some(function(p) { return p.id === currentVal; })) {
+    sel.value = currentVal;
+  } else {
+    var def = masterInvoicePrefixes.find(function(p) { return p.isDefault; }) || masterInvoicePrefixes[0];
+    if (def) sel.value = def.id;
+  }
+
+  onInvoicePrefixSelectChange(sel.value);
+}
+
+function onInvoicePrefixSelectChange(prefId) {
+  ensureMasterInvoicePrefixes();
+  var pref = masterInvoicePrefixes.find(function(p) { return p.id === prefId; }) || masterInvoicePrefixes[0];
+  var invNoEl = document.getElementById('inv-no');
+  if (invNoEl && pref) {
+    invNoEl.value = formatInvoiceNoFromPrefix(pref);
+  }
+}
+
+function onStartNoInput() {
+  var startNoEl = document.getElementById('pref-start-no');
+  var currentNoEl = document.getElementById('pref-current-no');
+  if (startNoEl && currentNoEl) {
+    var startVal = parseInt(startNoEl.value) || 1;
+    var curVal = parseInt(currentNoEl.value) || 1;
+    if (curVal < startVal) {
+      currentNoEl.value = startVal;
+    }
+  }
+  updatePrefixLivePreview();
+}
+
+function showAddInvoicePrefixModal(editId) {
+  ensureMasterInvoicePrefixes();
+  var titleEl = document.getElementById('pref-modal-title');
+  var editIdEl = document.getElementById('pref-edit-id');
+  var nameEl = document.getElementById('pref-name');
+  var prefixEl = document.getElementById('pref-prefix');
+  var suffixEl = document.getElementById('pref-suffix');
+  var startNoEl = document.getElementById('pref-start-no');
+  var currentNoEl = document.getElementById('pref-current-no');
+  var paddingEl = document.getElementById('pref-padding');
+  var isDefaultEl = document.getElementById('pref-is-default');
+  var notesEl = document.getElementById('pref-notes');
+
+  if (editId) {
+    var p = masterInvoicePrefixes.find(function(x) { return x.id === editId; });
+    if (!p) return;
+    var startVal = parseInt(p.startingNo) || 1;
+    var curVal = parseInt(p.currentNo) || 1;
+    if (curVal < startVal) curVal = startVal;
+
+    if (titleEl) titleEl.textContent = '✏️ Edit Invoice Prefix Series';
+    if (editIdEl) editIdEl.value = p.id;
+    if (nameEl) nameEl.value = p.name;
+    if (prefixEl) prefixEl.value = p.prefix || '';
+    if (suffixEl) suffixEl.value = p.suffix || '';
+    if (startNoEl) startNoEl.value = startVal;
+    if (currentNoEl) currentNoEl.value = curVal;
+    if (paddingEl) paddingEl.value = p.padding || 3;
+    if (isDefaultEl) isDefaultEl.checked = !!p.isDefault;
+    if (notesEl) notesEl.value = p.notes || '';
+  } else {
+    if (titleEl) titleEl.textContent = '🏷️ Add Invoice Prefix Series';
+    if (editIdEl) editIdEl.value = '';
+    if (nameEl) nameEl.value = '';
+    if (prefixEl) prefixEl.value = 'SI-';
+    if (suffixEl) suffixEl.value = '';
+    if (startNoEl) startNoEl.value = 1;
+    if (currentNoEl) currentNoEl.value = 1;
+    if (paddingEl) paddingEl.value = 3;
+    if (isDefaultEl) isDefaultEl.checked = masterInvoicePrefixes.length === 0;
+    if (notesEl) notesEl.value = '';
+  }
+
+  updatePrefixLivePreview();
+  showModal('invoicePrefixModal');
+}
+
+function updatePrefixLivePreview() {
+  var prefix = (document.getElementById('pref-prefix') || {}).value || '';
+  var suffix = (document.getElementById('pref-suffix') || {}).value || '';
+  var currentNo = parseInt((document.getElementById('pref-current-no') || {}).value) || 1;
+  var startNo = parseInt((document.getElementById('pref-start-no') || {}).value) || 1;
+  var padding = parseInt((document.getElementById('pref-padding') || {}).value) || 3;
+
+  var seqNo = Math.max(currentNo, startNo);
+  var numStr = String(seqNo).padStart(padding, '0');
+  var preview = prefix + numStr + suffix;
+
+  var previewEl = document.getElementById('pref-preview-output');
+  if (previewEl) previewEl.textContent = preview;
+}
+
+function saveInvoicePrefixModal() {
+  var editId = (document.getElementById('pref-edit-id') || {}).value;
+  var name = ((document.getElementById('pref-name') || {}).value || '').trim();
+  var prefix = ((document.getElementById('pref-prefix') || {}).value || '').trim();
+  var suffix = ((document.getElementById('pref-suffix') || {}).value || '').trim();
+  var startNo = parseInt((document.getElementById('pref-start-no') || {}).value) || 1;
+  var currentNo = parseInt((document.getElementById('pref-current-no') || {}).value) || 1;
+  var padding = parseInt((document.getElementById('pref-padding') || {}).value) || 3;
+  var isDefault = !!(document.getElementById('pref-is-default') || {}).checked;
+  var notes = ((document.getElementById('pref-notes') || {}).value || '').trim();
+
+  if (!name) {
+    showToast('Please enter a Series Name', 'danger');
+    return;
+  }
+
+  if (currentNo < startNo) {
+    currentNo = startNo;
+  }
+
+  ensureMasterInvoicePrefixes();
+
+  if (isDefault) {
+    masterInvoicePrefixes.forEach(function(p) { p.isDefault = false; });
+  }
+
+  if (editId) {
+    var p = masterInvoicePrefixes.find(function(x) { return x.id === editId; });
+    if (p) {
+      p.name = name;
+      p.prefix = prefix;
+      p.suffix = suffix;
+      p.startingNo = startNo;
+      p.currentNo = currentNo;
+      p.padding = padding;
+      p.isDefault = isDefault;
+      p.notes = notes;
+    }
+  } else {
+    var newPref = {
+      id: 'pref_' + Date.now(),
+      name: name,
+      prefix: prefix,
+      suffix: suffix,
+      startingNo: startNo,
+      currentNo: currentNo,
+      padding: padding,
+      isDefault: isDefault || masterInvoicePrefixes.length === 0,
+      notes: notes
+    };
+    masterInvoicePrefixes.push(newPref);
+  }
+
+  if (!masterInvoicePrefixes.some(function(p) { return p.isDefault; })) {
+    masterInvoicePrefixes[0].isDefault = true;
+  }
+
+  closeModal('invoicePrefixModal');
+  autoSave();
+  renderInvoicePrefixesUI();
+  populateInvoicePrefixDropdown();
+  showToast('Invoice Prefix Series saved successfully!', 'success');
+}
+
+function setDefaultInvoicePrefix(id) {
+  ensureMasterInvoicePrefixes();
+  masterInvoicePrefixes.forEach(function(p) { p.isDefault = (p.id === id); });
+  autoSave();
+  renderInvoicePrefixesUI();
+  populateInvoicePrefixDropdown();
+  showToast('Default invoice series updated!', 'success');
+}
+
+function deleteInvoicePrefix(id) {
+  ensureMasterInvoicePrefixes();
+  if (masterInvoicePrefixes.length <= 1) {
+    showToast('Cannot delete the last remaining invoice series', 'danger');
+    return;
+  }
+  if (!confirm('Are you sure you want to delete this invoice series?')) return;
+
+  var idx = masterInvoicePrefixes.findIndex(function(p) { return p.id === id; });
+  if (idx !== -1) {
+    var wasDefault = masterInvoicePrefixes[idx].isDefault;
+    masterInvoicePrefixes.splice(idx, 1);
+    if (wasDefault && masterInvoicePrefixes.length > 0) {
+      masterInvoicePrefixes[0].isDefault = true;
+    }
+    autoSave();
+    renderInvoicePrefixesUI();
+    populateInvoicePrefixDropdown();
+    showToast('Invoice series deleted', 'warning');
+  }
 }
 
 // ── RENDER LEDGERS ───────────────────────────────────────────
@@ -6259,16 +6790,25 @@ function getFYDateRange(fy) {
   };
 }
 
-// Parse stored date strings (DD/MM/YYYY or YYYY-MM-DD) → Date object
+// Parse stored date strings (DD/MM/YYYY, DD-MM-YYYY, or YYYY-MM-DD) → Date object
 function parseTxnDate(dateStr) {
   if (!dateStr) return null;
-  if (dateStr.indexOf('/') !== -1) {
-    // DD/MM/YYYY
-    var p = dateStr.split('/');
-    return new Date(parseInt(p[2]), parseInt(p[1]) - 1, parseInt(p[0]));
+  var str = String(dateStr).trim();
+  if (str.indexOf('/') !== -1) {
+    var p = str.split('/');
+    if (p.length === 3) {
+      if (p[0].length === 4) return new Date(parseInt(p[0]), parseInt(p[1]) - 1, parseInt(p[2]));
+      return new Date(parseInt(p[2]), parseInt(p[1]) - 1, parseInt(p[0]));
+    }
   }
-  // YYYY-MM-DD
-  var d = new Date(dateStr + 'T00:00:00');
+  if (str.indexOf('-') !== -1) {
+    var parts = str.split('T')[0].split('-');
+    if (parts.length === 3) {
+      if (parts[0].length === 4) return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+      return new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+    }
+  }
+  var d = new Date(str);
   return isNaN(d.getTime()) ? null : d;
 }
 
@@ -6288,28 +6828,34 @@ function updateDashboardStats() {
   var fyReceipts  = receipts.filter(function(r)  { return isInFY(r.date,  range); });
   var fyPayments  = payments.filter(function(p)  { return isInFY(p.date,  range); });
 
-  // Compute FY totals
-  var fySales       = fyInvoices.reduce(function(s,i)  { return s + (i.grandVal  || 0); }, 0);
-  var fyPurchTotal  = fyPurchases.reduce(function(s,p) { return s + (p.grandVal  || 0); }, 0);
-  var fyRecTotal    = fyReceipts.reduce(function(s,r)  { return s + (r.amount    || 0); }, 0);
-  var fyPayTotal    = fyPayments.reduce(function(s,p)  { return s + (p.amount    || 0); }, 0);
+  // Fallback to all invoices if none found for strictly filtered selectedFY
+  var useInvoices  = (fyInvoices.length > 0  || invoices.length === 0)  ? fyInvoices  : invoices;
+  var usePurchases = (fyPurchases.length > 0 || purchases.length === 0) ? fyPurchases : purchases;
+  var useReceipts  = (fyReceipts.length > 0  || receipts.length === 0)  ? fyReceipts  : receipts;
+  var usePayments  = (fyPayments.length > 0  || payments.length === 0)  ? fyPayments  : payments;
 
-  // Outstanding = invoiced - collected (for this FY)
+  // Compute FY totals using parseRs for numbers or strings
+  var fySales       = useInvoices.reduce(function(s,i)  { return s + (typeof i.grandVal === 'number' ? i.grandVal : parseRs(i.grandVal || i.grand || 0)); }, 0);
+  var fyPurchTotal  = usePurchases.reduce(function(s,p) { return s + (typeof p.grandVal === 'number' ? p.grandVal : parseRs(p.grandVal || p.grand || 0)); }, 0);
+  var fyRecTotal    = useReceipts.reduce(function(s,r)  { return s + (typeof r.amount === 'number'   ? r.amount   : parseRs(r.amount || 0)); }, 0);
+  var fyPayTotal    = usePayments.reduce(function(s,p)  { return s + (typeof p.amount === 'number'   ? p.amount   : parseRs(p.amount || 0)); }, 0);
+
+  // Outstanding = invoiced - collected
   var fyReceivables = Math.max(0, fySales      - fyRecTotal);
   var fyPayables    = Math.max(0, fyPurchTotal - fyPayTotal);
 
   // GST for this FY
-  var fyOutTax = fyInvoices.reduce(function(s,i) {
+  var fyOutTax = useInvoices.reduce(function(s,i) {
     return s + (parseRs(i.cgst)||0) + (parseRs(i.sgst)||0) + (parseRs(i.igst)||0);
   }, 0);
-  var fyITC = fyPurchases.reduce(function(s,p) {
+  var fyITC = usePurchases.reduce(function(s,p) {
     return s + (parseRs(p.cgst)||0) + (parseRs(p.sgst)||0) + (parseRs(p.igst)||0);
   }, 0);
   var fyGSTLiability = Math.max(0, fyOutTax - fyITC);
 
   // Net Profit (simple: sales taxable - purchase taxable)
-  var fySalesTaxable = fyInvoices.reduce(function(s,i)  { return s + (parseRs(i.subtotal)||0); }, 0);
-  var fyPurTaxable   = fyPurchases.reduce(function(s,p) { return s + (parseRs(p.subtotal)||0); }, 0);
+  var fySalesTaxable = useInvoices.reduce(function(s,i)  { return s + (parseRs(i.subtotal)||0); }, 0);
+  var fyPurTaxable   = usePurchases.reduce(function(s,p) { return s + (parseRs(p.subtotal)||0); }, 0);
   var fyNetProfit    = fySalesTaxable - fyPurTaxable;
 
   // Update stat cards
@@ -7554,8 +8100,17 @@ function showAddLedgerModal() {
   document.getElementById('lm-group').value = 'Sundry Debtors';
   onLedgerGroupChange();
 }
-function showAddPartyModal() { document.getElementById('partyModal').style.display = 'flex'; }
-function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+function showModal(id) { var el = document.getElementById(id); if (el) el.style.display = 'flex'; }
+function closeModal(id) { var el = document.getElementById(id); if (el) el.style.display = 'none'; }
+function escapeHTML(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 
 // ── LEDGER GROUP CONFIG ───────────────────────────────────────
 var LM_SECTIONS = ['lm-sec-party','lm-sec-bank','lm-sec-cash','lm-sec-capital',
@@ -8006,86 +8561,32 @@ var COMPANIES_KEY   = BL_PREFIX + 'companies';
 var ACTIVE_USER_KEY = BL_PREFIX + 'active_user';
 var _activeCompanyKey = null;
 
-// ── Supabase write (called by localStorage proxy in layer v6) ──
-// blSave: write to localStorage cache + Supabase via proxy
+// ── Supabase write & load helpers ──────────────────────────────
 function blSave(key, data) {
-  try { localStorage.setItem(key, JSON.stringify(data)); } catch(e) {}
-  // The localStorage proxy in layer v6 intercepts this setItem
-  // and mirrors it to Supabase automatically
-}
-
-// blLoad: synchronous read from localStorage cache
-// (populated from Supabase on login by layer v6)
-function blLoad(key, fallback) {
   try {
-    var raw = localStorage.getItem(key);
-    if (raw !== null) return JSON.parse(raw);
+    var strVal = typeof data === 'string' ? data : JSON.stringify(data);
+    localStorage.setItem(key, strVal);
   } catch(e) {}
-  return fallback;
-}
-
-// blRemove: remove from localStorage (proxy mirrors to Supabase)
-function blRemove(key) {
-  try { localStorage.removeItem(key); } catch(e) {}
-}
-
-// ── No-op stubs for removed storage systems ───────────────────
-function _openIDB(cb) { if(typeof cb==='function') cb(null); }
-function _idbExportAll(cb) { if(typeof cb==='function') cb({}); }
-function _idbImportAll(data, cb) { if(typeof cb==='function') cb(); }
-function _fsa_scheduleFlush() {}
-function fsaLinkFile() {
-  if(typeof showToast==='function')
-    showToast('ℹ️ File sync removed — data is in Supabase cloud', 'success');
-}
-var _fsaSupported = false;
-var _fsaLinked    = false;
-var _idb          = null;
-var _idbReady     = false;
-var _idbPending   = [];
-var IDB_NAME      = 'ArthaDeskProDB';
-var IDB_VERSION   = 1;
-var IDB_STORE     = 'kv';
-
-function _updateStorageStatus(mode) {
-  var el = document.getElementById('storage-status-badge');
-  if (!el) return;
-  el.innerHTML = '<span style="color:var(--accent);font-weight:700">☁️ Supabase Cloud (Unlimited)</span>';
-}
-function _updateFsaStatus() {}
-function initStorageStatusUI() { _updateStorageStatus('sb'); }
-function _estimateStorageUsed() {
-  var el = document.getElementById('storage-used-display');
-  if (el) el.innerHTML = '<strong style="color:var(--accent)">☁️ Stored in Supabase — no device limit</strong>';
-}
-
-
-// ── STORAGE HELPERS (IndexedDB PRIMARY, localStorage FALLBACK) ─
-// blSave / blLoad / blRemove are ASYNC-aware but also maintain
-// a localStorage mirror so that blLoad() can remain synchronous
-// (needed for app startup / existing call sites).
-
-// ── SUPABASE-ONLY STORAGE ─────────────────────────────────────
-// localStorage = fast session cache (cleared on logout)
-// Supabase     = permanent cloud database (single source of truth)
-// The localStorage proxy in Layer v6 mirrors all writes to Supabase
-
-function blSave(key, data) {
-  // Write to localStorage — Layer v6 proxy mirrors to Supabase
-  try { localStorage.setItem(key, JSON.stringify(data)); } catch(e) {}
 }
 
 function blLoad(key, fallback) {
-  // Read from localStorage cache (pre-populated from Supabase on login)
   try {
+    if (typeof window._memStore !== 'undefined' && (key in window._memStore)) {
+      var v = window._memStore[key];
+      if (typeof v === 'string') { try { v = JSON.parse(v); } catch(_) {} }
+      return (v !== undefined && v !== null) ? v : fallback;
+    }
     var raw = localStorage.getItem(key);
-    if (raw !== null) return JSON.parse(raw);
+    if (raw !== null) {
+      var val = (typeof raw === 'string') ? JSON.parse(raw) : raw;
+      if (typeof val === 'string') { try { val = JSON.parse(val); } catch(_) {} }
+      return (val !== undefined && val !== null) ? val : fallback;
+    }
   } catch(e) {}
-  return fallback;
+  return fallback !== undefined ? fallback : null;
 }
 
 function blRemove(key) {
-  // Remove from localStorage — Layer v6 proxy mirrors to Supabase
   try { localStorage.removeItem(key); } catch(e) {}
 }
 
@@ -8139,6 +8640,7 @@ function autoSave() {
     masterLedgers : masterLedgers,
     masterParties : masterParties,
     masterStock   : masterStock,
+    masterInvoicePrefixes : masterInvoicePrefixes,
     gstrData      : gstrData,
     dashData      : dashData,
     selectedFY    : selectedFY,
@@ -8222,7 +8724,10 @@ function loadCompanyState(companyName) {
   _activeCompanyKey = companyKey(companyName);
   window._activeCompanyKey = _activeCompanyKey;
   var state = blLoad(_activeCompanyKey, null);
-  if (!state) return false; // no saved data yet
+  if (typeof state === 'string') {
+    try { state = JSON.parse(state); } catch(_) {}
+  }
+  if (!state || typeof state !== 'object') return false; // no saved data yet
 
   // Restore counters
   if (state.invoiceNo  != null) invoiceNo  = state.invoiceNo;
@@ -8243,6 +8748,11 @@ function loadCompanyState(companyName) {
     masterLedgers = state.masterLedgers;
   if (Array.isArray(state.masterParties)) masterParties = state.masterParties;
   if (Array.isArray(state.masterStock))   masterStock   = state.masterStock;
+  if (Array.isArray(state.masterInvoicePrefixes) && state.masterInvoicePrefixes.length > 0) {
+    masterInvoicePrefixes = state.masterInvoicePrefixes;
+  } else {
+    masterInvoicePrefixes = getDefaultInvoicePrefixes();
+  }
 
   // Restore accumulators
   if (state.gstrData) Object.assign(gstrData, state.gstrData);
@@ -8269,9 +8779,8 @@ function loadCompanyState(companyName) {
   // Update all master displays
   renderAllMasters();
 
-  // Update invoice number display
-  var invNoEl = document.getElementById('inv-no');
-  if (invNoEl) invNoEl.value = 'SI-' + String(invoiceNo).padStart(3,'0');
+  // Update invoice number display with active prefix
+  populateInvoicePrefixDropdown();
   var purNoEl = document.getElementById('pur-no');
   if (purNoEl) purNoEl.value = 'PB-' + String(purchaseNo).padStart(3,'0');
 
