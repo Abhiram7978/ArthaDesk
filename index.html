@@ -2488,7 +2488,7 @@ select.form-control option{background:var(--surface)}
           <div class="table-header">
             <div class="table-title">🏢 Parties (Customers & Vendors)</div>
             <input class="search-input" type="text" placeholder="🔍 Search parties...">
-            <button class="topbar-btn btn-primary" onclick="showAddPartyModal()">+ Add Party</button>
+            <button class="topbar-btn btn-primary" onclick="showModal('partyModal')">+ Add Party</button>
           </div>
           <table class="data-table">
             <thead><tr><th>Name</th><th>Type</th><th>GSTIN</th><th>Phone</th><th>City</th><th>State</th><th>Balance</th><th>Action</th></tr></thead>
@@ -8459,7 +8459,7 @@ function handleTopAction() {
     'purchase-invoice': () => showToast('Opening purchase form...','success'),
     'receipt-voucher': () => showToast('Ready to enter receipt!','success'),
     ledgers: () => showAddLedgerModal(),
-    parties: () => showAddPartyModal(),
+    parties: () => showModal('partyModal'),
     'stock-items': () => showToast('Opening stock item form...','success'),
   };
   const action = actions[currentPage];
